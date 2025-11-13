@@ -1,4 +1,4 @@
-// _worker.js – Zoom Phone Recording Explorer backend
+// _worker.js – Zoom Phone Recording Explorer backend - nearly ready for deployment. 
 
 const ZOOM_API_BASE = "https://api.zoom.us/v2";
 const ZOOM_OAUTH_TOKEN_URL = "https://zoom.us/oauth/token";
