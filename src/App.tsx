@@ -12,6 +12,11 @@ type Site = {
   name: string;
 };
 
+type MeetingIdentity = {
+  userId: string;
+  source: string; // e.g. "ZOOM_MEETINGS_USER_ID" or "default_me"
+};
+
 type RecordingSource = "phone" | "meetings";
 
 type Recording = {
@@ -102,6 +107,7 @@ const App: React.FC = () => {
   const [nextToken, setNextToken] = useState<string | null>(null);
   const [prevTokens, setPrevTokens] = useState<string[]>([]);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
+  const [meetingIdentity, setMeetingIdentity] = useState<MeetingIdentity | null>(null);
 
   // ---- helpers to call backend ----
 
@@ -283,6 +289,22 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+  const loadMeetingIdentity = async () => {
+    try {
+      const res = await fetch("/api/meeting/identity");
+      if (!res.ok) return; // fail silently if not configured
+
+      const json = (await res.json()) as MeetingIdentity;
+      setMeetingIdentity(json);
+    } catch {
+      // ignore – identity is just a nice-to-have
+    }
+  };
+
+  loadMeetingIdentity();
+}, []);
+
   const recordings: Recording[] = data?.recordings ?? [];
   const paginationDisabled = source === "both";
 
@@ -291,15 +313,22 @@ const App: React.FC = () => {
       <header className="app-header">
         <div className="app-header-inner">
           <h1 className="app-title">Zoom Recording Explorer</h1>
-          <p className="app-subtitle">
-            Source:{" "}
-            {source === "phone"
-              ? "Phone"
-              : source === "meetings"
-              ? "Meetings"
-              : "Phone + Meetings"}{" "}
-            · {data?.from} → {data?.to}
-          </p>
+            <p className="app-subtitle">
+              Source:{" "}
+              {source === "phone"
+                ? "Phone"
+                : source === "meetings"
+                ? "Meetings"
+                : "Phone + Meetings"}{" "}
+              · {data?.from} → {data?.to}
+              {meetingIdentity && (source === "meetings" || source === "both") && (
+                <>
+                  {" "}
+                  · Meetings user: {meetingIdentity.userId}
+                  {meetingIdentity.source === "default_me" && " (me)"}
+                </>
+              )}
+            </p>
         </div>
       </header>
 

@@ -116,6 +116,22 @@ async function handleGetRecordings(req, env) {
   });
 }
 
+async function handleGetMeetingIdentity(req, env) {
+  const userId = env.ZOOM_MEETINGS_USER_ID || "me";
+
+  return new Response(
+    JSON.stringify({
+      userId,
+      source: env.ZOOM_MEETINGS_USER_ID ? "ZOOM_MEETINGS_USER_ID" : "default_me",
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+}
+
+
 function json(status, obj) {
   return new Response(JSON.stringify(obj), {
     status,
@@ -203,6 +219,11 @@ export default {
     // ---- Meeting recordings list (new) ----
     if (url.pathname === "/api/meeting/recordings" && req.method === "GET") {
       return handleGetMeetingRecordings(req, env);
+    }
+
+        // 👉 New: meetings identity
+    if (url.pathname === "/api/meeting/identity" && req.method === "GET") {
+      return handleGetMeetingIdentity(req, env);
     }
 
     // If your React app is served from the same Worker (it is),
