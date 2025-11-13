@@ -17,6 +17,41 @@ async function getZoomAccessToken(env) {
     return cachedToken;
   }
 
+  async function handleGetMeetingRecordings(req, env) {
+  const url = new URL(req.url);
+
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  const pageSize = url.searchParams.get("page_size") || "30";
+  const nextToken = url.searchParams.get("next_page_token") || "";
+
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  params.set("page_size", pageSize);
+  if (nextToken) params.set("next_page_token", nextToken);
+
+  const accessToken = await getZoomAccessToken(env);
+  const accountId = env.ZOOM_ACCOUNT_ID; // <-- set this in your env
+
+  const zoomRes = await fetch(
+    `https://api.zoom.us/v2/accounts/${accountId}/recordings?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+
+  const text = await zoomRes.text();
+  return new Response(text, {
+    status: zoomRes.status,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
   const basicAuth = btoa(`${env.ZOOM_CLIENT_ID}:${env.ZOOM_CLIENT_SECRET}`);
   const url = new URL(ZOOM_OAUTH_TOKEN_URL);
   url.searchParams.set("grant_type", "account_credentials");
@@ -147,38 +182,40 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
 
+    // ---- Phone recordings list ----
     if (url.pathname === "/api/phone/recordings" && req.method === "GET") {
-      return handleGetRecordings(req, env); // existing
+      // This is your existing handler that already works
+      return handleGetRecordings(req, env);
     }
 
+    // ---- Phone recording download proxy (optional) ----
     if (
       url.pathname === "/api/phone/recordings/download" &&
       req.method === "GET"
     ) {
+      // Only keep this if you added handleDownloadRecording
       return handleDownloadRecording(req, env);
     }
 
-    if (
-      url.pathname === "/api/phone/recordings" &&
-      req.method === "OPTIONS"
-    ) {
-      // CORS preflight for the JSON endpoint
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        },
-      });
+    // ---- Meeting recordings list (new) ----
+    if (url.pathname === "/api/meeting/recordings" && req.method === "GET") {
+      return handleGetMeetingRecordings(req, env);
     }
 
-    // ...then your ASSETS fallback etc.
+    // If your React app is served from the same Worker (it is),
+    // you don't strictly need CORS/OPTIONS handlers here.
+    // You can add them later if you expose these APIs cross-origin.
+
+    // ---- Static assets / front-end ----
     if (env.ASSETS) {
+      // R2 / Pages / assets binding created by wrangler
       return env.ASSETS.fetch(req);
     }
 
+    // Default: simple health check
     return new Response("Recording Explorer backend", { status: 200 });
   },
 };
+
+
 

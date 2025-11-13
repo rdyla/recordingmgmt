@@ -12,6 +12,8 @@ type Site = {
   name: string;
 };
 
+type RecordingSource = "phone" | "meetings";
+
 type Recording = {
   id: string;
   caller_number: string;
@@ -33,15 +35,50 @@ type Recording = {
   call_element_id?: string;
   end_time?: string;
   disclaimer_status?: number;
+
+  // extra for meetings
+  source?: RecordingSource;
+  topic?: string;
+  host_name?: string;
+  host_email?: string;
 };
 
 type ApiResponse = {
-  next_page_token?: string;
+  next_page_token?: string | null;
   page_size?: number;
   total_records?: number;
   from?: string;
   to?: string;
   recordings?: Recording[];
+};
+
+type SourceFilter = "phone" | "meetings" | "both";
+
+type MeetingRecordingFile = {
+  id?: string;
+  recording_start?: string;
+  recording_end?: string;
+  download_url?: string;
+  file_type?: string;
+};
+
+type MeetingItem = {
+  uuid: string;
+  id: number;
+  topic: string;
+  start_time: string;
+  duration?: number;
+  host_id: string;
+  host_email: string;
+  recording_files?: MeetingRecordingFile[];
+};
+
+type MeetingApiResponse = {
+  from?: string;
+  to?: string;
+  page_size?: number;
+  next_page_token?: string;
+  meetings?: MeetingItem[];
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -56,6 +93,7 @@ const App: React.FC = () => {
     "start_time" | "created_time"
   >("start_time");
   const [pageSize, setPageSize] = useState(30);
+  const [source, setSource] = useState<SourceFilter>("phone");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,37 +103,151 @@ const App: React.FC = () => {
   const [prevTokens, setPrevTokens] = useState<string[]>([]);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
 
+  // ---- helpers to call backend ----
+
+  const fetchPhonePage = async (tokenOverride: string | null) => {
+    const params = new URLSearchParams();
+    params.set("from", from);
+    params.set("to", to);
+    params.set("page_size", String(pageSize));
+
+    if (recordingType !== "All") {
+      params.set("recording_type", recordingType);
+    }
+
+    params.set("query_date_type", queryDateType);
+
+    if (tokenOverride && tokenOverride.length > 0) {
+      params.set("next_page_token", tokenOverride);
+    }
+
+    const res = await fetch(`/api/phone/recordings?${params.toString()}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+
+    const api: ApiResponse = await res.json();
+    const recs: Recording[] = (api.recordings ?? []).map((r) => ({
+      ...r,
+      source: "phone" as const,
+    }));
+
+    return { api, recs };
+  };
+
+  const fetchMeetingPage = async (tokenOverride: string | null) => {
+    const params = new URLSearchParams();
+    params.set("from", from);
+    params.set("to", to);
+    params.set("page_size", String(pageSize));
+
+    if (tokenOverride && tokenOverride.length > 0) {
+      params.set("next_page_token", tokenOverride);
+    }
+
+    const res = await fetch(`/api/meeting/recordings?${params.toString()}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+
+    const api: MeetingApiResponse = await res.json();
+
+    const recs: Recording[] = [];
+    for (const m of api.meetings ?? []) {
+      for (const f of m.recording_files ?? []) {
+        recs.push({
+          id:
+            f.id ||
+            `${m.id}-${f.file_type ?? "file"}-${f.recording_start ?? ""}`,
+          caller_number: "",
+          caller_number_type: 0,
+          callee_number: "",
+          callee_number_type: 0,
+          date_time: f.recording_start || m.start_time,
+          end_time: f.recording_end,
+          duration: m.duration ?? 0,
+          recording_type: f.file_type || "Recording",
+          download_url: f.download_url,
+          caller_name: m.topic,
+          callee_name: m.host_email,
+          owner: {
+            type: "user",
+            id: m.host_id,
+            name: m.host_email,
+          },
+          site: { id: "", name: "Meeting" },
+          direction: "meeting",
+          disclaimer_status: undefined,
+          source: "meetings",
+          topic: m.topic,
+          host_name: m.host_email,
+          host_email: m.host_email,
+        });
+      }
+    }
+
+    return { api, recs };
+  };
+
   const fetchRecordings = async (tokenOverride: string | null = null) => {
     setLoading(true);
     setError(null);
 
     try {
-      const params = new URLSearchParams();
-      params.set("from", from);
-      params.set("to", to);
-      params.set("page_size", String(pageSize));
+      if (source === "phone") {
+        const { api, recs } = await fetchPhonePage(tokenOverride);
 
-      if (recordingType !== "All") {
-        params.set("recording_type", recordingType);
+        setData({
+          from: api.from ?? from,
+          to: api.to ?? to,
+          total_records: api.total_records ?? recs.length,
+          next_page_token: api.next_page_token ?? null,
+          recordings: recs,
+        });
+
+        setNextToken(api.next_page_token ?? null);
+      } else if (source === "meetings") {
+        const { api, recs } = await fetchMeetingPage(tokenOverride);
+
+        setData({
+          from: api.from ?? from,
+          to: api.to ?? to,
+          total_records: recs.length,
+          next_page_token: api.next_page_token ?? null,
+          recordings: recs,
+        });
+
+        setNextToken(api.next_page_token ?? null);
+      } else {
+        // BOTH: first page of each, combined, sorted by time desc
+        const [phone, meetings] = await Promise.all([
+          fetchPhonePage(null),
+          fetchMeetingPage(null),
+        ]);
+
+        const combined = [...phone.recs, ...meetings.recs].sort((a, b) => {
+          const ta = a.date_time ? new Date(a.date_time).getTime() : 0;
+          const tb = b.date_time ? new Date(b.date_time).getTime() : 0;
+          return tb - ta;
+        });
+
+        setData({
+          from,
+          to,
+          total_records: combined.length,
+          next_page_token: null,
+          recordings: combined,
+        });
+
+        // disable pagination in combined mode
+        setNextToken(null);
+        setPrevTokens([]);
+        setCurrentToken(null);
       }
 
-      params.set("query_date_type", queryDateType);
-
-      if (tokenOverride && tokenOverride.length > 0) {
-        params.set("next_page_token", tokenOverride);
-      }
-
-      const res = await fetch(`/api/phone/recordings?${params.toString()}`);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text}`);
-      }
-
-      const json: ApiResponse = await res.json();
-      setData(json);
-      setNextToken(json.next_page_token || "");
-
-      console.debug("Recordings payload", json);
+      console.debug("fetchRecordings done");
     } catch (e: any) {
       console.error(e);
       setError(e?.message || String(e));
@@ -132,14 +284,21 @@ const App: React.FC = () => {
   }, []);
 
   const recordings: Recording[] = data?.recordings ?? [];
+  const paginationDisabled = source === "both";
 
   return (
     <div className="app-page">
       <header className="app-header">
         <div className="app-header-inner">
-          <h1 className="app-title">Zoom Phone Recording Explorer</h1>
+          <h1 className="app-title">Zoom Recording Explorer</h1>
           <p className="app-subtitle">
-            {data?.from} → {data?.to}
+            Source:{" "}
+            {source === "phone"
+              ? "Phone"
+              : source === "meetings"
+              ? "Meetings"
+              : "Phone + Meetings"}{" "}
+            · {data?.from} → {data?.to}
           </p>
         </div>
       </header>
@@ -170,12 +329,37 @@ const App: React.FC = () => {
               </div>
 
               <div className="filter-group">
+                <label className="filter-label">Source</label>
+                <select
+                  className="form-control"
+                  value={source}
+                  onChange={(e) => {
+                    const val = e.target.value as SourceFilter;
+                    setSource(val);
+                    setPrevTokens([]);
+                    setCurrentToken(null);
+                    setNextToken(null);
+                  }}
+                >
+                  <option value="phone">Phone only</option>
+                  <option value="meetings">Meetings only</option>
+                  <option value="both">Phone + Meetings</option>
+                </select>
+              </div>
+
+              <div className="filter-group">
                 <label className="filter-label">Recording type</label>
                 <select
                   className="form-control"
                   value={recordingType}
                   onChange={(e) =>
                     setRecordingType(e.target.value as typeof recordingType)
+                  }
+                  disabled={source === "meetings" || source === "both"}
+                  title={
+                    source === "meetings" || source === "both"
+                      ? "Recording type filter applies to phone recordings only"
+                      : undefined
                   }
                 >
                   <option value="All">All</option>
@@ -191,6 +375,12 @@ const App: React.FC = () => {
                   value={queryDateType}
                   onChange={(e) =>
                     setQueryDateType(e.target.value as typeof queryDateType)
+                  }
+                  disabled={source !== "phone"}
+                  title={
+                    source !== "phone"
+                      ? "Date type filter applies to phone recordings only"
+                      : undefined
                   }
                 >
                   <option value="start_time">Start time</option>
@@ -229,7 +419,12 @@ const App: React.FC = () => {
                     ? data.total_records
                     : recordings.length}
                 </span>
-                {currentToken && <span>Page token: {currentToken}</span>}
+                {currentToken && !paginationDisabled && (
+                  <span>Page token: {currentToken}</span>
+                )}
+                {paginationDisabled && (
+                  <span>(Pagination disabled in combined view)</span>
+                )}
               </div>
             </div>
 
@@ -250,10 +445,10 @@ const App: React.FC = () => {
                   <thead>
                     <tr>
                       <th>Date / Time</th>
-                      <th>Direction</th>
-                      <th>Caller</th>
-                      <th>Callee</th>
-                      <th>Owner</th>
+                      <th>Source</th>
+                      <th>Primary</th>
+                      <th>Secondary</th>
+                      <th>Owner / Host</th>
                       <th>Site</th>
                       <th>Duration (s)</th>
                       <th>Type</th>
@@ -262,6 +457,8 @@ const App: React.FC = () => {
                   </thead>
                   <tbody>
                     {recordings.map((rec, idx) => {
+                      const isMeeting = rec.source === "meetings";
+
                       const dt = rec.date_time
                         ? new Date(rec.date_time)
                         : rec.end_time
@@ -278,20 +475,29 @@ const App: React.FC = () => {
                           })
                         : "—";
 
-                      const callerDisplay =
-                        rec.caller_name && rec.caller_number
-                          ? `${rec.caller_name} (${rec.caller_number})`
-                          : rec.caller_name || rec.caller_number || "—";
+                      const primary = isMeeting
+                        ? rec.topic || rec.caller_name || "Meeting"
+                        : rec.caller_name && rec.caller_number
+                        ? `${rec.caller_name} (${rec.caller_number})`
+                        : rec.caller_name || rec.caller_number || "—";
 
-                      const calleeDisplay =
-                        rec.callee_name && rec.callee_number
-                          ? `${rec.callee_name} (${rec.callee_number})`
-                          : rec.callee_name || rec.callee_number || "—";
+                      const secondary = isMeeting
+                        ? rec.host_email || rec.callee_name || "—"
+                        : rec.callee_name && rec.callee_number
+                        ? `${rec.callee_name} (${rec.callee_number})`
+                        : rec.callee_name || rec.callee_number || "—";
 
-                      const ownerDisplay =
-                        rec.owner?.name && rec.owner?.extension_number
-                          ? `${rec.owner.name} (${rec.owner.extension_number})`
-                          : rec.owner?.name || "—";
+                      const ownerDisplay = isMeeting
+                        ? rec.host_email || rec.owner?.name || "—"
+                        : rec.owner?.name && rec.owner?.extension_number
+                        ? `${rec.owner.name} (${rec.owner.extension_number})`
+                        : rec.owner?.name || "—";
+
+                      const siteName = isMeeting
+                        ? "—"
+                        : rec.site?.name || "—";
+
+                      const sourceLabel = isMeeting ? "Meeting" : "Phone";
 
                       return (
                         <tr
@@ -299,13 +505,11 @@ const App: React.FC = () => {
                           className="rec-row"
                         >
                           <td>{dateDisplay}</td>
-                          <td style={{ textTransform: "capitalize" }}>
-                            {rec.direction || "—"}
-                          </td>
-                          <td>{callerDisplay}</td>
-                          <td>{calleeDisplay}</td>
+                          <td>{sourceLabel}</td>
+                          <td>{primary}</td>
+                          <td>{secondary}</td>
                           <td>{ownerDisplay}</td>
-                          <td>{rec.site?.name || "—"}</td>
+                          <td>{siteName}</td>
                           <td>{rec.duration ?? "—"}</td>
                           <td>{rec.recording_type || "—"}</td>
                           <td>
@@ -320,7 +524,7 @@ const App: React.FC = () => {
                               </a>
                             )}
 
-                            {rec.call_history_id && (
+                            {rec.call_history_id && !isMeeting && (
                               <button
                                 className="pager-btn"
                                 onClick={() => {
@@ -345,14 +549,21 @@ const App: React.FC = () => {
               <div className="pager-buttons">
                 <button
                   onClick={handlePrev}
-                  disabled={!prevTokens.length || loading}
+                  disabled={
+                    paginationDisabled || !prevTokens.length || loading
+                  }
                   className="pager-btn"
                 >
                   Previous
                 </button>
                 <button
                   onClick={handleNext}
-                  disabled={!nextToken || !nextToken.length || loading}
+                  disabled={
+                    paginationDisabled ||
+                    !nextToken ||
+                    !nextToken.length ||
+                    loading
+                  }
                   className="pager-btn"
                 >
                   Next
@@ -360,7 +571,11 @@ const App: React.FC = () => {
               </div>
               <div>
                 Next token:{" "}
-                {nextToken && nextToken.length ? nextToken : "—"}
+                {paginationDisabled
+                  ? "— (combined view)"
+                  : nextToken && nextToken.length
+                  ? nextToken
+                  : "—"}
               </div>
             </div>
           </section>
