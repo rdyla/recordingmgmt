@@ -15,6 +15,41 @@ type ApiResponse = {
   [key: string]: any;
 };
 
+type Owner = {
+  type: string;
+  id: string;
+  name: string;
+  extension_number?: number;
+};
+
+type Site = {
+  id: string;
+  name: string;
+};
+
+type Recording = {
+  id: string;
+  caller_number: string;
+  caller_number_type: number;
+  caller_name?: string;
+  callee_number: string;
+  callee_number_type: number;
+  callee_name?: string;
+  direction: "inbound" | "outbound" | string;
+  duration: number;
+  download_url?: string;
+  date_time: string;
+  recording_type: string;
+  call_log_id?: string;
+  call_history_id?: string;
+  call_id?: string;
+  owner?: Owner;
+  site?: Site;
+  call_element_id?: string;
+  end_time?: string;
+  disclaimer_status?: number;
+};
+
 const todayStr = new Date().toISOString().slice(0, 10);
 
 const App: React.FC = () => {
