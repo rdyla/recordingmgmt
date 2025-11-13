@@ -208,12 +208,12 @@ export default {
     }
 
     // ---- Phone recording download proxy (optional) ----
-    if (
-      url.pathname === "/api/phone/recordings/download" &&
-      req.method === "GET"
-    ) {
+    // if (
+    //   url.pathname === "/api/phone/recordings/download" &&
+    //   req.method === "GET"
+    // ) {
       // Only keep this if you added handleDownloadRecording
-      return handleDownloadRecording(req, env);
+      // return handleDownloadRecording(req, env);
     }
 
     // ---- Meeting recordings list (new) ----
