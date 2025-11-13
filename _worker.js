@@ -71,41 +71,93 @@ async function handleGetRecordings(req, env) {
 
 /* -------------------- MEETING RECORDINGS (STUB FOR NOW) -------------------- */
 
+/* -------------------- MEETING RECORDINGS (REAL) -------------------- */
+
 async function handleGetMeetingRecordings(req, env) {
-  // Prove routing works without Zoom dependencies
-  const now = new Date().toISOString();
+  try {
+    const url = new URL(req.url);
 
-  const fakeResponse = {
-    from: "2025-11-01",
-    to: "2025-11-13",
-    page_size: 30,
-    next_page_token: "",
-    meetings: [
-      {
-        uuid: "dummy-uuid",
-        id: 123456789,
-        topic: "Test Meeting (stub)",
-        start_time: now,
-        duration: 45,
-        host_id: "host-123",
-        host_email: "host@example.com",
-        recording_files: [
-          {
-            id: "file-1",
-            recording_start: now,
-            recording_end: now,
-            download_url: "https://example.com/download",
-            file_type: "MP4",
-          },
-        ],
+    const from = url.searchParams.get("from");
+    const to = url.searchParams.get("to");
+    const pageSize = url.searchParams.get("page_size") || "30";
+    const nextToken = url.searchParams.get("next_page_token") || "";
+
+    // Build query params for Zoom
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    params.set("page_size", pageSize);
+    if (nextToken) params.set("next_page_token", nextToken);
+    params.set("trash", "false");
+    params.set("mc", "false");
+
+    // Determine user ID – environment override OR default “me”
+    const userId = env.ZOOM_MEETINGS_USER_ID || "me";
+
+    // Build the Zoom API URL
+    const zoomUrl = `https://api.zoom.us/v2/users/${encodeURIComponent(
+      userId
+    )}/recordings?${params.toString()}`;
+
+    // Get OAuth access token using your existing helper
+    const token = await getZoomAccessToken(env);
+
+    // Fetch from Zoom
+    const zoomRes = await fetch(zoomUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
       },
-    ],
-  };
+    });
 
-  return new Response(JSON.stringify(fakeResponse), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+    const text = await zoomRes.text();
+
+    // If Zoom returned an error body, forward it directly
+    if (!zoomRes.ok) {
+      return new Response(
+        JSON.stringify({
+          error: true,
+          status: zoomRes.status,
+          message: text,
+        }),
+        {
+          status: zoomRes.status,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Parse JSON safely
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return new Response(
+        JSON.stringify({
+          error: true,
+          status: 500,
+          message: "Zoom returned non-JSON response",
+          raw: text,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Return exactly as Zoom gave it (React already expects this shape)
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    // ANY exceptions get returned cleanly
+    return new Response(
+      JSON.stringify({
+        error: true,
+        status: 500,
+        message: err?.message || String(err),
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
 }
 
 /* -------------------- MEETING IDENTITY -------------------- */
