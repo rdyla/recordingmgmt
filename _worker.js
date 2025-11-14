@@ -73,6 +73,8 @@ async function handleGetRecordings(req, env) {
 
 /* -------------------- MEETING RECORDINGS (REAL) -------------------- */
 
+/* -------------------- MEETING RECORDINGS (ACCOUNT-LEVEL) -------------------- */
+
 async function handleGetMeetingRecordings(req, env) {
   try {
     const url = new URL(req.url);
@@ -81,6 +83,18 @@ async function handleGetMeetingRecordings(req, env) {
     const to = url.searchParams.get("to");
     const pageSize = url.searchParams.get("page_size") || "30";
     const nextToken = url.searchParams.get("next_page_token") || "";
+
+    const accountId = env.ZOOM_ACCOUNT_ID;
+    if (!accountId) {
+      return new Response(
+        JSON.stringify({
+          error: true,
+          status: 500,
+          message: "Missing ZOOM_ACCOUNT_ID in environment for account recordings",
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     // Build query params for Zoom
     const params = new URLSearchParams();
@@ -91,18 +105,14 @@ async function handleGetMeetingRecordings(req, env) {
     params.set("trash", "false");
     params.set("mc", "false");
 
-    // Determine user ID – environment override OR default “me”
-    const userId = env.ZOOM_MEETINGS_USER_ID || "me";
-
-    // Build the Zoom API URL
-    const zoomUrl = `https://api.zoom.us/v2/users/${encodeURIComponent(
-      userId
+    // GET /accounts/{accountId}/recordings
+    const zoomUrl = `${ZOOM_API_BASE}/accounts/${encodeURIComponent(
+      accountId
     )}/recordings?${params.toString()}`;
 
-    // Get OAuth access token using your existing helper
+    // Use your existing S2S token helper
     const token = await getZoomAccessToken(env);
 
-    // Fetch from Zoom
     const zoomRes = await fetch(zoomUrl, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -111,7 +121,6 @@ async function handleGetMeetingRecordings(req, env) {
 
     const text = await zoomRes.text();
 
-    // If Zoom returned an error body, forward it directly
     if (!zoomRes.ok) {
       return new Response(
         JSON.stringify({
@@ -126,7 +135,6 @@ async function handleGetMeetingRecordings(req, env) {
       );
     }
 
-    // Parse JSON safely
     let data;
     try {
       data = JSON.parse(text);
@@ -142,13 +150,13 @@ async function handleGetMeetingRecordings(req, env) {
       );
     }
 
-    // Return exactly as Zoom gave it (React already expects this shape)
+    // Zoom account recordings response already has:
+    // { from, to, page_size, next_page_token, meetings: [...] }
     return new Response(JSON.stringify(data), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
-    // ANY exceptions get returned cleanly
     return new Response(
       JSON.stringify({
         error: true,
@@ -160,15 +168,16 @@ async function handleGetMeetingRecordings(req, env) {
   }
 }
 
+
 /* -------------------- MEETING IDENTITY -------------------- */
 
 async function handleGetMeetingIdentity(req, env) {
-  const userId = env.ZOOM_MEETINGS_USER_ID || "me";
+  const accountId = env.ZOOM_ACCOUNT_ID || "unknown";
 
   return new Response(
     JSON.stringify({
-      userId,
-      source: env.ZOOM_MEETINGS_USER_ID ? "ZOOM_MEETINGS_USER_ID" : "default_me",
+      userId: `account:${accountId}`,
+      source: "account_recordings",
     }),
     { status: 200, headers: { "Content-Type": "application/json" } }
   );
