@@ -124,6 +124,9 @@ const App: React.FC = () => {
   const [deleteProgress, setDeleteProgress] =
     useState<DeleteProgress | null>(null);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
+
 
   // ---- helpers ----
 
@@ -292,11 +295,28 @@ const App: React.FC = () => {
     fetchRecordings(last);
   };
 
-  useEffect(() => {
-    // initial load
-    fetchRecordings(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    useEffect(() => {
+      const checkAuth = async () => {
+        try {
+          const res = await fetch("/api/auth/me");
+          if (res.ok) {
+            const json = await res.json();
+            setAuthed(true);
+            setAuthEmail(json.email || null);
+            // only fetch recordings once we know we're authenticated
+            fetchRecordings(null);
+          } else {
+            setAuthed(false);
+          }
+        } catch {
+          setAuthed(false);
+        }
+      };
+
+      checkAuth();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
 
   useEffect(() => {
     const loadMeetingIdentity = async () => {
