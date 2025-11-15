@@ -74,7 +74,8 @@ type MeetingItem = {
   start_time: string;
   duration?: number;
   host_id: string;
-  host_email: string;
+  host_email?: string;      // may come from owner_email on backend
+  owner_email?: string;
   recording_files?: MeetingRecordingFile[];
 };
 
@@ -83,7 +84,9 @@ type MeetingApiResponse = {
   to?: string;
   page_size?: number;
   next_page_token?: string;
+  total_records?: number;
   meetings?: MeetingItem[];
+  _errors?: any;
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -100,6 +103,11 @@ const App: React.FC = () => {
   const [pageSize, setPageSize] = useState(30);
   const [source, setSource] = useState<SourceFilter>("phone");
 
+  // NEW: meeting search filters
+  const [meetingOwnerEmail, setMeetingOwnerEmail] = useState("");
+  const [meetingTopic, setMeetingTopic] = useState("");
+  const [meetingQuery, setMeetingQuery] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +115,8 @@ const App: React.FC = () => {
   const [nextToken, setNextToken] = useState<string | null>(null);
   const [prevTokens, setPrevTokens] = useState<string[]>([]);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
-  const [meetingIdentity, setMeetingIdentity] = useState<MeetingIdentity | null>(null);
+  const [meetingIdentity, setMeetingIdentity] =
+    useState<MeetingIdentity | null>(null);
 
   // ---- helpers to call backend ----
 
@@ -148,6 +157,11 @@ const App: React.FC = () => {
     params.set("to", to);
     params.set("page_size", String(pageSize));
 
+    // NEW: pass search filters to backend
+    if (meetingOwnerEmail) params.set("owner_email", meetingOwnerEmail);
+    if (meetingTopic) params.set("topic", meetingTopic);
+    if (meetingQuery) params.set("q", meetingQuery);
+
     if (tokenOverride && tokenOverride.length > 0) {
       params.set("next_page_token", tokenOverride);
     }
@@ -162,6 +176,10 @@ const App: React.FC = () => {
 
     const recs: Recording[] = [];
     for (const m of api.meetings ?? []) {
+      // newer backend may only provide owner_email; fall back accordingly
+      const hostEmail =
+        (m.host_email as string) || (m.owner_email as string) || "";
+
       for (const f of m.recording_files ?? []) {
         recs.push({
           id:
@@ -177,19 +195,19 @@ const App: React.FC = () => {
           recording_type: f.file_type || "Recording",
           download_url: f.download_url,
           caller_name: m.topic,
-          callee_name: m.host_email,
+          callee_name: hostEmail,
           owner: {
             type: "user",
             id: m.host_id,
-            name: m.host_email,
+            name: hostEmail,
           },
           site: { id: "", name: "Meeting" },
           direction: "meeting",
           disclaimer_status: undefined,
           source: "meetings",
           topic: m.topic,
-          host_name: m.host_email,
-          host_email: m.host_email,
+          host_name: hostEmail,
+          host_email: hostEmail,
         });
       }
     }
@@ -220,7 +238,7 @@ const App: React.FC = () => {
         setData({
           from: api.from ?? from,
           to: api.to ?? to,
-          total_records: recs.length,
+          total_records: api.total_records ?? recs.length,
           next_page_token: api.next_page_token ?? null,
           recordings: recs,
         });
@@ -290,20 +308,20 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-  const loadMeetingIdentity = async () => {
-    try {
-      const res = await fetch("/api/meeting/identity");
-      if (!res.ok) return; // fail silently if not configured
+    const loadMeetingIdentity = async () => {
+      try {
+        const res = await fetch("/api/meeting/identity");
+        if (!res.ok) return; // fail silently if not configured
 
-      const json = (await res.json()) as MeetingIdentity;
-      setMeetingIdentity(json);
-    } catch {
-      // ignore – identity is just a nice-to-have
-    }
-  };
+        const json = (await res.json()) as MeetingIdentity;
+        setMeetingIdentity(json);
+      } catch {
+        // ignore – identity is just a nice-to-have
+      }
+    };
 
-  loadMeetingIdentity();
-}, []);
+    loadMeetingIdentity();
+  }, []);
 
   const recordings: Recording[] = data?.recordings ?? [];
   const paginationDisabled = source === "both";
@@ -313,22 +331,22 @@ const App: React.FC = () => {
       <header className="app-header">
         <div className="app-header-inner">
           <h1 className="app-title">Zoom Recording Explorer</h1>
-            <p className="app-subtitle">
-              Source:{" "}
-              {source === "phone"
-                ? "Phone"
-                : source === "meetings"
-                ? "Meetings"
-                : "Phone + Meetings"}{" "}
-              · {data?.from} → {data?.to}
-              {meetingIdentity && (source === "meetings" || source === "both") && (
-                <>
-                  {" "}
-                  · Meetings user: {meetingIdentity.userId}
-                  {meetingIdentity.source === "default_me" && " (me)"}
-                </>
-              )}
-            </p>
+          <p className="app-subtitle">
+            Source:{" "}
+            {source === "phone"
+              ? "Phone"
+              : source === "meetings"
+              ? "Meetings"
+              : "Phone + Meetings"}{" "}
+            · {data?.from} → {data?.to}
+            {meetingIdentity && (source === "meetings" || source === "both") && (
+              <>
+                {" "}
+                · Meetings user: {meetingIdentity.userId}
+                {meetingIdentity.source === "default_me" && " (me)"}
+              </>
+            )}
+          </p>
         </div>
       </header>
 
@@ -397,26 +415,6 @@ const App: React.FC = () => {
                 </select>
               </div>
 
-              <div className="filter-group">
-                <label className="filter-label">Query date type</label>
-                <select
-                  className="form-control"
-                  value={queryDateType}
-                  onChange={(e) =>
-                    setQueryDateType(e.target.value as typeof queryDateType)
-                  }
-                  disabled={source !== "phone"}
-                  title={
-                    source !== "phone"
-                      ? "Date type filter applies to phone recordings only"
-                      : undefined
-                  }
-                >
-                  <option value="start_time">Start time</option>
-                  <option value="created_time">Created time</option>
-                </select>
-              </div>
-
               <div className="filter-group small">
                 <label className="filter-label">Page size</label>
                 <input
@@ -431,6 +429,50 @@ const App: React.FC = () => {
                 />
               </div>
             </div>
+
+            {/* NEW: Meeting search row */}
+            {source === "meetings" && (
+              <div className="filters-row" style={{ marginTop: "0.75rem" }}>
+                <div className="filter-group">
+                  <label className="filter-label">
+                    Owner email (contains)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. ryan@"
+                    value={meetingOwnerEmail}
+                    onChange={(e) => setMeetingOwnerEmail(e.target.value)}
+                  />
+                </div>
+
+                <div className="filter-group">
+                  <label className="filter-label">
+                    Topic (contains)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. onboarding"
+                    value={meetingTopic}
+                    onChange={(e) => setMeetingTopic(e.target.value)}
+                  />
+                </div>
+
+                <div className="filter-group">
+                  <label className="filter-label">
+                    Search (topic / owner / host)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="free text search"
+                    value={meetingQuery}
+                    onChange={(e) => setMeetingQuery(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="filter-actions">
               <button
