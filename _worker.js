@@ -81,12 +81,21 @@ async function handleGetRecordings(req, env) {
 
 /* -------------------- MEETING RECORDINGS (USER-AGGREGATED, TABLE-FRIENDLY) -------------------- */
 
+/* -------------------- MEETING RECORDINGS (USER-AGGREGATED, SEARCHABLE) -------------------- */
+
 async function handleGetMeetingRecordings(req, env) {
   try {
     const url   = new URL(req.url);
+
+    // Base filters
     const from  = url.searchParams.get("from")  || "";
     const to    = url.searchParams.get("to")    || "";
     const debug = url.searchParams.get("debug") || ""; // "users" | "user-recordings" | ""
+
+    // Search filters
+    const ownerFilter = (url.searchParams.get("owner_email") || "").toLowerCase();
+    const topicFilter = (url.searchParams.get("topic")       || "").toLowerCase();
+    const q           = (url.searchParams.get("q")           || "").toLowerCase();
 
     const token = await getZoomAccessToken(env);
 
@@ -126,7 +135,7 @@ async function handleGetMeetingRecordings(req, env) {
       nextPageToken = usersData.next_page_token || "";
     } while (nextPageToken);
 
-    // DEBUG: show just user list
+    // 🔍 DEBUG: show just user list
     if (debug === "users") {
       return new Response(
         JSON.stringify(
@@ -236,9 +245,8 @@ async function handleGetMeetingRecordings(req, env) {
             const files = Array.isArray(m.recording_files) ? m.recording_files : [];
             const primary = files[0] || null;
 
-            // Keep the important stuff + a trimmed recording_files
             meetings.push({
-              // Core meeting fields from zoom schema
+              // Core meeting fields from Zoom schema
               account_id: m.account_id,
               duration: m.duration,
               host_id: m.host_id,
@@ -253,14 +261,14 @@ async function handleGetMeetingRecordings(req, env) {
               auto_delete_date: m.auto_delete_date,
               recording_play_passcode: m.recording_play_passcode,
 
-              // Owner context (makes filtering easy)
+              // Owner context (helps UI filter)
               owner_email: user.email,
 
               // “Table friendly” derived fields
               primary_file_type: primary?.file_type || null,
               primary_file_extension: primary?.file_extension || null,
 
-              // Trimmed recording_files: keep what’s interesting for UI
+              // Trimmed recording_files
               recording_files: files.map(f => ({
                 id: f.id,
                 file_type: f.file_type,
@@ -289,7 +297,7 @@ async function handleGetMeetingRecordings(req, env) {
       Array.from({ length: Math.min(concurrency, users.length) }, () => worker())
     );
 
-    // DEBUG: per-user counts only
+    // 🔍 DEBUG: per-user counts only
     if (debug === "user-recordings") {
       return new Response(
         JSON.stringify(
@@ -313,22 +321,46 @@ async function handleGetMeetingRecordings(req, env) {
       );
     }
 
-    // 4) Pagination-ish envelope shaped like Zoom’s schema
-    const totalRecords = meetings.length;
+    // 4) Apply search filters (owner_email, topic, q)
+    let filtered = meetings;
+
+    if (ownerFilter) {
+      filtered = filtered.filter(m =>
+        (m.owner_email || "").toLowerCase().includes(ownerFilter)
+      );
+    }
+
+    if (topicFilter) {
+      filtered = filtered.filter(m =>
+        (m.topic || "").toLowerCase().includes(topicFilter)
+      );
+    }
+
+    if (q) {
+      filtered = filtered.filter(m => {
+        const bag = [
+          m.topic || "",
+          m.owner_email || "",
+          m.host_id || "",
+        ].join(" ");
+        return bag.toLowerCase().includes(q);
+      });
+    }
+
+    const totalRecords = filtered.length;
 
     const respBody = {
       from,
       to,
-      next_page_token: "",       // we return everything in one shot for now
+      next_page_token: "",          // everything in one shot for now
       page_count: totalRecords ? 1 : 0,
       page_size: totalRecords,
       total_records: totalRecords,
-      meetings,
+      meetings: filtered,
     };
 
     if (errors.length) {
-      // not part of Zoom schema, but handy for debug / you can ignore in UI
-      respBody._errors = errors;
+      respBody._errors = errors;   // extra debug info, UI can ignore
     }
 
     return new Response(JSON.stringify(respBody), {
@@ -336,7 +368,7 @@ async function handleGetMeetingRecordings(req, env) {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-      },
+        },
     });
   } catch (err) {
     return new Response(
@@ -349,37 +381,6 @@ async function handleGetMeetingRecordings(req, env) {
     );
   }
 }
-
-    // 4) Normal aggregated response
-    const respBody = {
-      from,
-      to,
-      page_size: meetings.length,
-      next_page_token: "",
-      meetings,
-      total_users: users.length,
-      errors: errors.length ? errors : undefined,
-    };
-
-    return new Response(JSON.stringify(respBody), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
-  } catch (err) {
-    return new Response(
-      JSON.stringify({
-        error: true,
-        status: 500,
-        message: err?.message || String(err),
-      }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
-  }
-}
-
 
 /* -------------------- MEETING IDENTITY -------------------- */
 
