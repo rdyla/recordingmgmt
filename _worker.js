@@ -75,86 +75,162 @@ async function handleGetRecordings(req, env) {
 
 /* -------------------- MEETING RECORDINGS (ACCOUNT-LEVEL) -------------------- */
 
+/* -------------------- MEETING RECORDINGS (USER-AGGREGATED) -------------------- */
+
 async function handleGetMeetingRecordings(req, env) {
   try {
     const url = new URL(req.url);
+    const from = url.searchParams.get("from") || "";
+    const to   = url.searchParams.get("to")   || "";
 
-    const from = url.searchParams.get("from");
-    const to = url.searchParams.get("to");
-    const pageSize = url.searchParams.get("page_size") || "30";
-    const nextToken = url.searchParams.get("next_page_token") || "";
-
-    const accountId = env.ZOOM_ACCOUNT_ID;
-    if (!accountId) {
-      return new Response(
-        JSON.stringify({
-          error: true,
-          status: 500,
-          message: "Missing ZOOM_ACCOUNT_ID in environment for account recordings",
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Build query params for Zoom
-    const params = new URLSearchParams();
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
-    params.set("page_size", pageSize);
-    if (nextToken) params.set("next_page_token", nextToken);
-    params.set("trash", "false");
-    params.set("mc", "false");
-
-    // GET /accounts/{accountId}/recordings
-    const zoomUrl = `${ZOOM_API_BASE}/accounts/${encodeURIComponent(
-      accountId
-    )}/recordings?${params.toString()}`;
-
-    // Use your existing S2S token helper
     const token = await getZoomAccessToken(env);
 
-    const zoomRes = await fetch(zoomUrl, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    // 1) Get ALL active users (handle pagination)
+    const users = [];
+    let nextPageToken = "";
 
-    const text = await zoomRes.text();
+    do {
+      const usersUrl = new URL(`${ZOOM_API_BASE}/users`);
+      usersUrl.searchParams.set("status", "active");
+      usersUrl.searchParams.set("page_size", "300");
+      if (nextPageToken) {
+        usersUrl.searchParams.set("next_page_token", nextPageToken);
+      }
 
-    if (!zoomRes.ok) {
+      const usersRes = await fetch(usersUrl.toString(), {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!usersRes.ok) {
+        const body = await usersRes.text();
+        return new Response(
+          JSON.stringify({
+            error: true,
+            status: usersRes.status,
+            message: `Failed to list users: ${body}`,
+          }),
+          { status: usersRes.status, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const usersData = await usersRes.json();
+      if (Array.isArray(usersData.users)) {
+        users.push(...usersData.users);
+      }
+
+      nextPageToken = usersData.next_page_token || "";
+    } while (nextPageToken);
+
+    if (!users.length) {
       return new Response(
         JSON.stringify({
-          error: true,
-          status: zoomRes.status,
-          message: text,
+          from,
+          to,
+          page_size: 0,
+          next_page_token: "",
+          meetings: [],
+          total_users: 0,
         }),
-        {
-          status: zoomRes.status,
-          headers: { "Content-Type": "application/json" },
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // 2) Helper for each user's recordings URL
+    const buildRecordingsUrl = (userId) => {
+      const u = new URL(`${ZOOM_API_BASE}/users/${encodeURIComponent(userId)}/recordings`);
+      u.searchParams.set("page_size", "50");
+      if (from) u.searchParams.set("from", from);
+      if (to)   u.searchParams.set("to", to);
+      return u.toString();
+    };
+
+    const meetings = [];
+    const errors = [];
+
+    // 3) Throttled concurrency so we don’t slam the API
+    const concurrency = 5;
+    let idx = 0;
+
+    async function worker() {
+      while (idx < users.length) {
+        const i = idx++;
+        const user = users[i];
+
+        try {
+          const res = await fetch(buildRecordingsUrl(user.id), {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+
+          const text = await res.text();
+
+          if (!res.ok) {
+            errors.push({
+              userId: user.id,
+              userEmail: user.email,
+              status: res.status,
+              message: text,
+            });
+            continue;
+          }
+
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            errors.push({
+              userId: user.id,
+              userEmail: user.email,
+              status: res.status,
+              message: "Non-JSON response from recordings endpoint",
+              raw: text,
+            });
+            continue;
+          }
+
+          if (Array.isArray(data.meetings)) {
+            for (const m of data.meetings) {
+              meetings.push({
+                ...m,
+                owner_id: user.id,
+                owner_email: user.email,
+              });
+            }
+          }
+        } catch (e) {
+          errors.push({
+            userId: user.id,
+            userEmail: user.email,
+            error: e.message || String(e),
+          });
         }
-      );
+      }
     }
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      return new Response(
-        JSON.stringify({
-          error: true,
-          status: 500,
-          message: "Zoom returned non-JSON response",
-          raw: text,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, users.length) }, () => worker())
+    );
 
-    // Zoom account recordings response already has:
-    // { from, to, page_size, next_page_token, meetings: [...] }
-    return new Response(JSON.stringify(data), {
+    // 4) Response shaped *similar* to Zoom’s account recordings endpoint
+    const respBody = {
+      from,
+      to,
+      page_size: meetings.length,       // not "real" paging anymore, just count
+      next_page_token: "",             // no cross-user paging; everything in one shot
+      meetings,
+      total_users: users.length,
+      errors: errors.length ? errors : undefined,
+    };
+
+    return new Response(JSON.stringify(respBody), {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
     });
   } catch (err) {
     return new Response(
@@ -167,7 +243,6 @@ async function handleGetMeetingRecordings(req, env) {
     );
   }
 }
-
 
 /* -------------------- MEETING IDENTITY -------------------- */
 
