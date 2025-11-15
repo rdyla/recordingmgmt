@@ -108,8 +108,8 @@ const useInitialDemoMode = (): boolean => {
   }
 };
 
-/** Generate ~200 fake phone recordings for demo mode */
-function generateDemoRecordings(): Recording[] {
+/** Generate ~200 fake phone recordings for demo mode, constrained to [from,to] if provided */
+function generateDemoRecordings(from?: string, to?: string): Recording[] {
   const owners = [
     { name: "Alex Parker", ext: 101 },
     { name: "Jamie Lee", ext: 102 },
@@ -150,7 +150,27 @@ function generateDemoRecordings(): Recording[] {
   const types = ["Automatic", "On-demand"] as const;
 
   const now = Date.now();
-  const fourteenDays = 14 * 24 * 60 * 60 * 1000;
+
+  // Determine time range to generate within
+  let startMs: number | null = null;
+  let endMs: number | null = null;
+
+  if (from && to) {
+    const fromDate = new Date(from + "T00:00:00");
+    const toDate = new Date(to + "T23:59:59");
+    if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime())) {
+      startMs = Math.min(fromDate.getTime(), toDate.getTime());
+      endMs = Math.max(fromDate.getTime(), toDate.getTime());
+    }
+  }
+
+  // Fallback: last 14 days
+  if (startMs == null || endMs == null || startMs === endMs) {
+    endMs = now;
+    startMs = now - 14 * 24 * 60 * 60 * 1000;
+  }
+
+  const range = endMs - startMs || 1;
 
   const records: Recording[] = [];
 
@@ -159,8 +179,8 @@ function generateDemoRecordings(): Recording[] {
     const site = sites[i % sites.length];
     const direction = directions[i % directions.length];
 
-    const offsetMs = randomInt(0, fourteenDays);
-    const start = new Date(now - offsetMs);
+    const offsetMs = Math.floor(Math.random() * range);
+    const start = new Date(startMs + offsetMs);
     const duration = randomInt(30, 1200); // 30s–20m
 
     const callerName = direction === "inbound" ? "Customer" : owner.name;
@@ -250,11 +270,8 @@ const App: React.FC = () => {
     params.set("from", from);
     params.set("to", to);
 
-    // Zoom max is 300; clamp to avoid 4xx
     const zoomPageSize = Math.min(pageSize || 100, 300);
     params.set("page_size", String(zoomPageSize));
-
-    // phone-only endpoint supports query_date_type; keep simple: start_time
     params.set("query_date_type", "start_time");
 
     if (tokenOverride && tokenOverride.length > 0) {
@@ -288,14 +305,12 @@ const App: React.FC = () => {
       params.set("next_page_token", tokenOverride);
     }
 
-    // backend already supports aggregated per-user call
     const res = await fetch(`/api/meeting/recordings?${params.toString()}`);
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
 
-    // ⬇️ This line is the fix: use MeetingApiResponse instead of any
     const api: MeetingApiResponse = await res.json();
 
     const recs: Recording[] = [];
@@ -343,20 +358,8 @@ const App: React.FC = () => {
 
     try {
       if (demoMode) {
-        // Demo: generate fake data and filter by date range
-        let recs = generateDemoRecordings();
-
-        const fromDate = from ? new Date(from + "T00:00:00") : null;
-        const toDate = to ? new Date(to + "T23:59:59") : null;
-
-        if (fromDate || toDate) {
-          recs = recs.filter((r) => {
-            const d = new Date(r.date_time);
-            if (fromDate && d < fromDate) return false;
-            if (toDate && d > toDate) return false;
-            return true;
-          });
-        }
+        // Demo: generate ~200 fake records within [from,to] (or last 14 days if unset)
+        const recs = generateDemoRecordings(from, to);
 
         setData({
           from,
@@ -397,7 +400,6 @@ const App: React.FC = () => {
         setNextToken(api.next_page_token ?? null);
       }
 
-      // reset paging + selection when we load a new server page
       setPageIndex(0);
       setSelectedKeys(new Set());
       console.debug("fetchRecordings done");
@@ -557,7 +559,6 @@ const App: React.FC = () => {
     );
     if (!confirmed) return;
 
-    // Build flat list of selected records (from filtered set, not only current page)
     const toDelete: Recording[] = [];
     filteredRecordings.forEach((rec, idx) => {
       const key = makeRecordKey(rec, idx);
@@ -586,7 +587,7 @@ const App: React.FC = () => {
       return;
     }
 
-    // REAL MODE: call backend delete APIs
+    // REAL MODE
     setDeleting(true);
     setDeleteProgress({ total: toDelete.length, done: 0 });
     setDeleteMessage(null);
