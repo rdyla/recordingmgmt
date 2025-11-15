@@ -621,7 +621,7 @@ async function handleZoomLogin(req, env) {
   params.set("client_id", clientId);
   params.set("redirect_uri", redirectUri);
   // minimum scopes just to identify the user; you can add more later if needed
-  params.set("scope","user:read:user:admin user:read:email:admin");
+  params.set("scope","user:read:user:master");
   params.set("state", state);
 
   const authUrl = `https://zoom.us/oauth/authorize?${params.toString()}`;
