@@ -46,7 +46,7 @@ type Recording = {
   topic?: string;
   host_name?: string;
   host_email?: string;
-  meetingId?: number; // numeric meeting id for delete API
+  meetingId?: string; // numeric meeting id for delete API
 };
 
 type ApiResponse = {
@@ -216,7 +216,7 @@ const App: React.FC = () => {
           topic: m.topic,
           host_name: m.host_email,
           host_email: m.host_email,
-          meetingId: m.id,
+          meetingId: m.uuid,
         });
       }
     }

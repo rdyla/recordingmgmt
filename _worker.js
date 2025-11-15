@@ -155,7 +155,7 @@ async function handleDeleteMeetingRecording(req, env) {
     return json(400, { error: "Invalid JSON body" });
   }
 
-  const meetingId = body?.meetingId;
+  const meetingId = body?.meetingId;   // UUID string now
   const recordingId = body?.recordingId;
   const action = body?.action || "trash"; // or "delete" to bypass trash
 
@@ -167,9 +167,19 @@ async function handleDeleteMeetingRecording(req, env) {
 
   const token = await getZoomAccessToken(env);
 
-  let zoomUrl = `${ZOOM_API_BASE}/meetings/${encodeURIComponent(
-    String(meetingId)
-  )}/recordings/${encodeURIComponent(String(recordingId))}`;
+  // Zoom notes: if UUID starts with "/" or contains "//", you must double-encode
+  // We'll do a generic "double encode when needed" to be safe.
+  const rawMeetingId = String(meetingId);
+  let meetingPathId = rawMeetingId;
+
+  if (meetingPathId.startsWith("/") || meetingPathId.includes("//")) {
+    meetingPathId = encodeURIComponent(meetingPathId); // first encode
+  }
+  meetingPathId = encodeURIComponent(meetingPathId); // always encode for URL
+
+  const recordingPathId = encodeURIComponent(String(recordingId));
+
+  let zoomUrl = `${ZOOM_API_BASE}/meetings/${meetingPathId}/recordings/${recordingPathId}`;
 
   const params = new URLSearchParams();
   params.set("action", action);
@@ -189,8 +199,7 @@ async function handleDeleteMeetingRecording(req, env) {
     body: text.slice(0, 500),
   });
 
-  // Zoom can return 200 + {"code":200,"message":"No permission."}
-  // Treat that as an error, not success.
+  // If Zoom returns JSON with code/message, surface it as an error
   if (text) {
     try {
       const z = JSON.parse(text);
@@ -222,7 +231,6 @@ async function handleDeleteMeetingRecording(req, env) {
     raw: text || null,
   });
 }
-
 
 
 /* -------------------- MEETING RECORDINGS (REAL) -------------------- */
