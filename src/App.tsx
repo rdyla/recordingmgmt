@@ -19,6 +19,17 @@ type MeetingIdentity = {
 
 type RecordingSource = "phone" | "meetings";
 
+type MeetingRecordingFile = {
+  id?: string;
+  recording_start?: string;
+  recording_end?: string;
+  download_url?: string;
+  file_type?: string;
+  file_extension?: string;
+  file_size?: number;
+  recording_type?: string;
+};
+
 type Recording = {
   id: string;
   caller_number: string;
@@ -57,7 +68,6 @@ type Recording = {
   files_types?: string[];
 };
 
-
 type ApiResponse = {
   next_page_token?: string | null;
   page_size?: number;
@@ -68,18 +78,6 @@ type ApiResponse = {
 };
 
 type SourceFilter = "phone" | "meetings";
-
-type MeetingRecordingFile = {
-  id?: string;
-  recording_start?: string;
-  recording_end?: string;
-  download_url?: string;
-  file_type?: string;
-  file_extension?: string;
-  file_size?: number;
-  recording_type?: string;
-};
-
 
 type MeetingItem = {
   uuid: string;
@@ -321,55 +319,55 @@ const App: React.FC = () => {
     const params = new URLSearchParams();
     params.set("from", from);
     params.set("to", to);
-  
+
     const zoomPageSize = Math.min(pageSize || 100, 300);
     params.set("page_size", String(zoomPageSize));
-  
+
     if (tokenOverride && tokenOverride.length > 0) {
       params.set("next_page_token", tokenOverride);
     }
-  
+
     const res = await fetch(`/api/meeting/recordings?${params.toString()}`);
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
-  
+
     const api: MeetingApiResponse = await res.json();
-  
+
     console.debug("Meeting API raw sample", {
       from: api.from,
       to: api.to,
       count: api.meetings?.length ?? 0,
       first: api.meetings?.[0],
     });
-  
+
     const recs: Recording[] = [];
-  
+
     for (const m of api.meetings ?? []) {
       const mm: any = m;
-  
+
       const hostEmail: string =
         mm.hostEmail || // from worker attachHostsToRecordings
         mm.host_email || // if snake_case
         mm.owner_email || // from worker
         "";
-  
+
       const hostName: string =
         mm.hostName || // from worker attachHostsToRecordings
         mm.owner_name || // from worker
         hostEmail || // fall back to email
         mm.topic || // or topic
         "Unknown";
-  
+
       const files: MeetingRecordingFile[] = Array.isArray(m.recording_files)
         ? m.recording_files
         : [];
-  
+
       // Earliest recording_start or fall back to meeting start_time
       let firstStartIso: string | undefined = undefined;
       const starts: Date[] = [];
-  
+
       for (const f of files) {
         if (f.recording_start) {
           const d = new Date(f.recording_start);
@@ -378,12 +376,12 @@ const App: React.FC = () => {
           }
         }
       }
-  
+
       if (starts.length) {
         starts.sort((a, b) => a.getTime() - b.getTime());
         firstStartIso = starts[0].toISOString();
       }
-  
+
       const totalSizeBytes = files.reduce((acc, f) => {
         const sz =
           typeof f.file_size === "number" && !isNaN(f.file_size)
@@ -391,7 +389,7 @@ const App: React.FC = () => {
             : 0;
         return acc + sz;
       }, 0);
-  
+
       const fileTypes = Array.from(
         new Set(
           files
@@ -399,7 +397,7 @@ const App: React.FC = () => {
             .filter((s) => typeof s === "string" && s.length > 0)
         )
       );
-  
+
       recs.push({
         // Use meeting UUID as primary id
         id: m.uuid || String(m.id),
@@ -407,23 +405,23 @@ const App: React.FC = () => {
         caller_number_type: 0,
         callee_number: "",
         callee_number_type: 0,
-  
+
         date_time: firstStartIso || m.start_time,
         end_time: undefined,
         duration: m.duration ?? 0,
         recording_type: "Meeting",
         download_url: undefined,
-  
+
         // Show topic & host like before
         caller_name: m.topic,
         callee_name: hostEmail || hostName,
-  
+
         owner: {
           type: "user",
           id: m.host_id,
           name: hostName || hostEmail || "Unknown",
         },
-  
+
         site: { id: "", name: "Meeting" },
         direction: "meeting",
         disclaimer_status: undefined,
@@ -432,7 +430,7 @@ const App: React.FC = () => {
         host_name: hostName,
         host_email: hostEmail,
         meetingId: m.uuid,
-  
+
         // size + child summary
         file_size: totalSizeBytes || undefined,
         recording_files: files,
@@ -440,10 +438,9 @@ const App: React.FC = () => {
         files_types: fileTypes,
       });
     }
-  
+
     return { api, recs };
   };
-  
 
   const fetchRecordings = async (tokenOverride: string | null = null) => {
     setLoading(true);
@@ -709,7 +706,7 @@ const App: React.FC = () => {
                   action: "trash",
                 }),
               });
-            
+
               if (!res.ok) {
                 const txt = await res.text();
                 console.error("Meeting delete failed", res.status, txt);
@@ -949,7 +946,9 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     className={
-                      source === "meetings" ? "btn-toggle active" : "btn-toggle"
+                      source === "meetings"
+                        ? "btn-toggle active"
+                        : "btn-toggle"
                     }
                     onClick={() => {
                       setSource("meetings");
@@ -1113,25 +1112,25 @@ const App: React.FC = () => {
             ) : (
               <div className="table-wrapper">
                 <table className="rec-table">
-                <thead>
-                  <tr>
-                    <th>
-                      <input
-                        type="checkbox"
-                        checked={allOnPageSelected}
-                        onChange={(e) => selectAllOnPage(e.target.checked)}
-                      />
-                    </th>
-                    <th>Date / Time</th>
-                    <th>Source</th>
-                    <th>Primary</th>
-                    <th>Owner / Host</th>
-                    <th>Site</th>
-                    <th>Files</th>
-                    <th>Size</th>
-                    <th>Type</th>
-                  </tr>
-                </thead>
+                  <thead>
+                    <tr>
+                      <th>
+                        <input
+                          type="checkbox"
+                          checked={allOnPageSelected}
+                          onChange={(e) => selectAllOnPage(e.target.checked)}
+                        />
+                      </th>
+                      <th>Date / Time</th>
+                      <th>Source</th>
+                      <th>Primary</th>
+                      <th>Owner / Host</th>
+                      <th>Site</th>
+                      <th>Files</th>
+                      <th>Size</th>
+                      <th>Type</th>
+                    </tr>
+                  </thead>
 
                   <tbody>
                     {ownerGroups.map((group) => {
@@ -1186,13 +1185,13 @@ const App: React.FC = () => {
                             group.items.map(({ rec, globalIndex }) => {
                               const key = makeRecordKey(rec, globalIndex);
                               const isMeeting = rec.source === "meetings";
-                            
+
                               const dt = rec.date_time
                                 ? new Date(rec.date_time)
                                 : rec.end_time
                                 ? new Date(rec.end_time)
                                 : null;
-                            
+
                               const dateDisplay = dt
                                 ? dt.toLocaleString(undefined, {
                                     year: "numeric",
@@ -1202,45 +1201,87 @@ const App: React.FC = () => {
                                     minute: "2-digit",
                                   })
                                 : "—";
-                            
+
                               const primary = isMeeting
                                 ? rec.topic || rec.caller_name || "Meeting"
                                 : rec.caller_name && rec.caller_number
                                 ? `${rec.caller_name} (${rec.caller_number})`
                                 : rec.caller_name || rec.caller_number || "—";
-                            
+
                               const ownerDisplay = isMeeting
                                 ? rec.host_email || rec.owner?.name || "—"
                                 : rec.owner?.name && rec.owner?.extension_number
                                 ? `${rec.owner.name} (${rec.owner.extension_number})`
                                 : rec.owner?.name || "—";
-                            
-                              const siteName = isMeeting ? "Meeting" : rec.site?.name || "—";
-                            
-                              const sourceLabel = isMeeting ? "Meeting" : "Phone";
-                            
+
+                              const siteName = isMeeting
+                                ? "Meeting"
+                                : rec.site?.name || "—";
+
+                              const sourceLabel = isMeeting
+                                ? "Meeting"
+                                : "Phone";
+
                               const sizeDisplay = formatBytes(rec.file_size);
-                            
+
                               // ----- Files column display -----
                               let filesDisplay: React.ReactNode = "—";
-                            
+
                               if (isMeeting) {
                                 const files = rec.recording_files ?? [];
-                                const fileCount = rec.files_count ?? files.length;
-                            
+                                const fileCount =
+                                  rec.files_count ?? files.length;
+
                                 if (fileCount > 0) {
                                   const seenTypes = new Set<string>();
                                   const fileLinks: React.ReactNode[] = [];
-                            
+
                                   for (const f of files) {
-                                    const t = (f.file_type || "FILE").toUpperCase();
-                                    if (!f.download_url || seenTypes.has(t)) continue;
+                                    const t = (
+                                      f.file_type || "FILE"
+                                    ).toUpperCase();
+                                    if (
+                                      !f.download_url ||
+                                      seenTypes.has(t)
+                                    )
+                                      continue;
                                     seenTypes.add(t);
-                            
+
+                                    // Build a friendly filename
+                                    const safeTopic = (
+                                      rec.topic ||
+                                      rec.caller_name ||
+                                      "meeting"
+                                    )
+                                      .toLowerCase()
+                                      .replace(/[^a-z0-9_\-]+/g, "_")
+                                      .slice(0, 40);
+
+                                    const dtPart = f.recording_start
+                                      ? new Date(f.recording_start)
+                                          .toISOString()
+                                          .slice(0, 19)
+                                          .replace(/[:T]/g, "-")
+                                      : rec.date_time
+                                      ? new Date(rec.date_time)
+                                          .toISOString()
+                                          .slice(0, 19)
+                                          .replace(/[:T]/g, "-")
+                                      : "recording";
+
+                                    const ext =
+                                      (
+                                        f.file_extension || f.file_type || ""
+                                      ).toLowerCase() || "dat";
+
+                                    const filename = `${safeTopic}_${dtPart}.${ext}`;
+
                                     const href = `/api/meeting/recordings/download?url=${encodeURIComponent(
                                       f.download_url
+                                    )}&filename=${encodeURIComponent(
+                                      filename
                                     )}`;
-                            
+
                                     fileLinks.push(
                                       <a
                                         key={t}
@@ -1251,10 +1292,11 @@ const App: React.FC = () => {
                                       </a>
                                     );
                                   }
-                            
+
                                   filesDisplay = (
                                     <>
-                                      {fileCount} file{fileCount !== 1 ? "s" : ""}
+                                      {fileCount} file
+                                      {fileCount !== 1 ? "s" : ""}
                                       {fileLinks.length > 0 && (
                                         <>
                                           {" ("}
@@ -1277,20 +1319,25 @@ const App: React.FC = () => {
                                     rec.download_url
                                   )}`;
                                   filesDisplay = (
-                                    <a href={href} className="text-sky-400 hover:underline">
+                                    <a
+                                      href={href}
+                                      className="text-sky-400 hover:underline"
+                                    >
                                       Recording
                                     </a>
                                   );
                                 }
                               }
-                            
+
                               return (
                                 <tr key={key} className="rec-row">
                                   <td>
                                     <input
                                       type="checkbox"
                                       checked={selectedKeys.has(key)}
-                                      onChange={() => toggleRowSelection(rec, globalIndex)}
+                                      onChange={() =>
+                                        toggleRowSelection(rec, globalIndex)
+                                      }
                                     />
                                   </td>
                                   <td>{dateDisplay}</td>
@@ -1304,7 +1351,6 @@ const App: React.FC = () => {
                                 </tr>
                               );
                             })}
-                            
                         </React.Fragment>
                       );
                     })}

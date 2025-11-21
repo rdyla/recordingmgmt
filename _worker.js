@@ -683,6 +683,7 @@ async function handleDownloadRecording(req, env) {
 async function handleDownloadMeetingRecording(req, env) {
   const url = new URL(req.url);
   const target = url.searchParams.get("url");
+  const filename = url.searchParams.get("filename") || "";
 
   if (!target) {
     return json(400, { error: "Missing 'url' query parameter" });
@@ -700,13 +701,11 @@ async function handleDownloadMeetingRecording(req, env) {
     return json(400, { error: "Blocked URL" });
   }
 
-  // Optional: further restrict to cloud recording paths
-  // e.g. /rec/download/... or /rec/play/...
+  // Optional: restrict to recording endpoints
   if (!zoomUrl.pathname.startsWith("/rec/")) {
     return json(400, { error: "Blocked path" });
   }
 
-  // Get S2S OAuth access token
   const token = await getZoomAccessToken(env);
   if (!token) {
     return json(500, { error: "Unable to acquire Zoom access token" });
@@ -719,22 +718,30 @@ async function handleDownloadMeetingRecording(req, env) {
     },
   });
 
-  const status = zoomRes.status;
-  const ct = zoomRes.headers.get("content-type") || "";
-  const cd = zoomRes.headers.get("content-disposition") || "";
-
-  console.log("MEETING DOWNLOAD", {
-    url: zoomUrl.toString(),
-    status,
-    contentType: ct,
-  });
+  const ct = zoomRes.headers.get("content-type");
+  const cd = zoomRes.headers.get("content-disposition");
 
   const headers = new Headers();
   if (ct) headers.set("Content-Type", ct);
-  if (cd) headers.set("Content-Disposition", cd);
+
+  // Prefer Zoom's filename if they ever start sending one
+  if (cd && /filename=/i.test(cd)) {
+    headers.set("Content-Disposition", cd);
+  } else if (filename) {
+    headers.set(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`
+    );
+  } else {
+    headers.set("Content-Disposition", "attachment");
+  }
+
   headers.set("Cache-Control", "private, max-age=0, no-store");
 
-  return new Response(zoomRes.body, { status, headers });
+  return new Response(zoomRes.body, {
+    status: zoomRes.status,
+    headers,
+  });
 }
 
 /* -------------------- JSON HELPER -------------------- */
