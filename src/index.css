@@ -64,6 +64,46 @@ body {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.85);
 }
 
+
+/* ---- UI improvement: fix scroll height and width to view window */
+/* Make main content fill screen */
+.app-main {
+  height: calc(100vh - 120px); /* Adjust header height subtraction if needed */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Force table wrapper to use available height */
+/* .table-wrapper { 
+  flex: 1;
+  overflow: auto; /* vertical AND horizontal together 
+  padding-bottom: 4px;
+} */
+
+.table-wrapper {
+  flex: 1;
+  overflow: auto;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e3e5e8;
+}
+
+
+/* Allow table to expand horizontally without squishing */
+.rec-table {
+  width: max-content;      /* expands infinitely with columns */
+  min-width: 100%;         /* never smaller than the viewport */
+  border-collapse: collapse;
+}
+
+.rec-table th,
+.rec-table td {
+  padding: 8px 14px;
+  white-space: nowrap; /* prevents ugly wrapping */
+}
+
+
 /* ---- Filters row ---- */
 
 .filters-row {
