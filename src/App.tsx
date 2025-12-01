@@ -36,10 +36,14 @@ const App: React.FC = () => {
     null
   );
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
-  const [meetingIdentity, setMeetingIdentity] = useState<MeetingIdentity | null>(
-    null
-  );
+  const [meetingIdentity, setMeetingIdentity] =
+    useState<MeetingIdentity | null>(null);
   const [demoMode] = useState<boolean>(() => useInitialDemoMode());
+
+  // NEW: auto-delete filter (meetings only)
+  const [autoDeleteFilter, setAutoDeleteFilter] = useState<
+    "all" | "auto" | "manual"
+  >("all");
 
   const {
     data,
@@ -98,8 +102,29 @@ const App: React.FC = () => {
   );
 
   const filteredRecordings = useMemo(
-    () => recordings.filter(matchesQuery),
-    [matchesQuery, recordings]
+    () =>
+      recordings
+        .filter(matchesQuery)
+        .filter((rec) => {
+          // Auto-delete filter applies only to meetings
+          if (source !== "meetings") return true;
+
+          if (autoDeleteFilter === "all") return true;
+          if (autoDeleteFilter === "auto") {
+            // We’ll look for the camelCase field if present, or fall back
+            const val: boolean | null | undefined =
+              (rec as any).autoDelete ?? (rec as any).auto_delete;
+            return val === true;
+          }
+          if (autoDeleteFilter === "manual") {
+            const val: boolean | null | undefined =
+              (rec as any).autoDelete ?? (rec as any).auto_delete;
+            return val === false;
+          }
+
+          return true;
+        }),
+    [matchesQuery, recordings, source, autoDeleteFilter]
   );
 
   const effectivePageSize = pageSize || 100;
@@ -158,7 +183,12 @@ const App: React.FC = () => {
     toggleGroupCollapse,
     isGroupFullySelected,
     toggleGroupSelection,
-  } = useOwnerGroups(pageRecordsWithIndex, makeRecordKey, selectedKeys, setSelectedKeys);
+  } = useOwnerGroups(
+    pageRecordsWithIndex,
+    makeRecordKey,
+    selectedKeys,
+    setSelectedKeys
+  );
 
   useEffect(() => {
     const loadMeetingIdentity = async () => {
@@ -267,17 +297,23 @@ const App: React.FC = () => {
       if (demoMode) {
         setData((prev) => {
           if (!prev || !prev.recordings) return prev;
-          const remaining = prev.recordings.filter((r) => !toDelete.includes(r));
+          const remaining = prev.recordings.filter(
+            (r) => !toDelete.includes(r)
+          );
           return {
             ...prev,
             recordings: remaining,
             total_records: remaining.length,
           };
         });
-        setDeleteMessage(`Demo delete: removed ${success} record(s) from the table.`);
+        setDeleteMessage(
+          `Demo delete: removed ${success} record(s) from the table.`
+        );
         clearSelection();
       } else {
-        setDeleteMessage(`Delete complete: ${success} succeeded, ${failed} failed.`);
+        setDeleteMessage(
+          `Delete complete: ${success} succeeded, ${failed} failed.`
+        );
         await fetchRecordings(currentToken);
         clearSelection();
       }
@@ -329,15 +365,39 @@ const App: React.FC = () => {
                   className="form-control"
                   value={source}
                   onChange={(e) => {
-                    setSource(e.target.value as SourceFilter);
+                    const newSource = e.target.value as SourceFilter;
+                    setSource(newSource);
                     setPageIndex(0);
                     clearSelection();
+                    // reset auto-delete filter when leaving meetings
+                    if (newSource !== "meetings") {
+                      setAutoDeleteFilter("all");
+                    }
                   }}
                 >
                   <option value="phone">Phone</option>
                   <option value="meetings">Meetings</option>
                 </select>
               </div>
+
+              {source === "meetings" && (
+                <div className="filter-group">
+                  <label className="filter-label">Auto-delete</label>
+                  <select
+                    className="form-control"
+                    value={autoDeleteFilter}
+                    onChange={(e) =>
+                      setAutoDeleteFilter(
+                        e.target.value as "all" | "auto" | "manual"
+                      )
+                    }
+                  >
+                    <option value="all">All</option>
+                    <option value="auto">Auto-delete ON</option>
+                    <option value="manual">Auto-delete OFF</option>
+                  </select>
+                </div>
+              )}
 
               <div className="filter-group">
                 <label className="filter-label">Page size</label>
@@ -365,7 +425,11 @@ const App: React.FC = () => {
 
               <div className="filter-group">
                 <label className="filter-label">&nbsp;</label>
-                <button className="btn-primary" onClick={onSearch} disabled={loading}>
+                <button
+                  className="btn-primary"
+                  onClick={onSearch}
+                  disabled={loading}
+                >
                   Search
                 </button>
               </div>
@@ -375,29 +439,52 @@ const App: React.FC = () => {
               <div className="status-group">
                 <span>
                   {totalFiltered} recording{totalFiltered !== 1 ? "s" : ""}
-                  {data?.total_records != null && data.total_records !== totalFiltered && (
-                    <> ({data.total_records} on server)</>
-                  )}
+                  {data?.total_records != null &&
+                    data.total_records !== totalFiltered && (
+                      <> ({data.total_records} on server)</>
+                    )}
                 </span>
-                <span>· Page {safePageIndex + 1} / {totalPages}</span>
+                <span>
+                  · Page {safePageIndex + 1} / {totalPages}
+                </span>
                 {error && <span className="error-text">Error: {error}</span>}
               </div>
 
               <div className="button-group">
-                <button className="btn" onClick={() => setPageIndex((idx) => Math.max(0, idx - 1))} disabled={safePageIndex <= 0 || deleting}>
+                <button
+                  className="btn"
+                  onClick={() =>
+                    setPageIndex((idx) => Math.max(0, idx - 1))
+                  }
+                  disabled={safePageIndex <= 0 || deleting}
+                >
                   Prev page
                 </button>
                 <button
                   className="btn"
-                  onClick={() => setPageIndex((idx) => (idx + 1 < totalPages ? idx + 1 : idx))}
+                  onClick={() =>
+                    setPageIndex((idx) =>
+                      idx + 1 < totalPages ? idx + 1 : idx
+                    )
+                  }
                   disabled={safePageIndex + 1 >= totalPages || deleting}
                 >
                   Next page
                 </button>
-                <button className="btn" onClick={onApiPrev} disabled={!prevTokens.length || loading}>
+                <button
+                  className="btn"
+                  onClick={onApiPrev}
+                  disabled={!prevTokens.length || loading}
+                >
                   « API prev
                 </button>
-                <button className="btn" onClick={onApiNext} disabled={!nextToken || !nextToken.length || loading}>
+                <button
+                  className="btn"
+                  onClick={onApiNext}
+                  disabled={
+                    !nextToken || !nextToken.length || loading
+                  }
+                >
                   API next »
                 </button>
               </div>
@@ -406,28 +493,57 @@ const App: React.FC = () => {
             <div className="actions-row">
               <div className="status-group">
                 <label className="filter-label">Selected</label>
-                <input className="form-control" readOnly value={selectedCount} />
-                <button className="btn" onClick={() => setSelectedKeys(new Set())}>
+                <input
+                  className="form-control"
+                  readOnly
+                  value={selectedCount}
+                />
+                <button
+                  className="btn"
+                  onClick={() => setSelectedKeys(new Set())}
+                >
                   Clear
                 </button>
-                <button className="btn" onClick={expandAllGroups} disabled={deleting}>
+                <button
+                  className="btn"
+                  onClick={expandAllGroups}
+                  disabled={deleting}
+                >
                   Expand all groups
                 </button>
-                <button className="btn" onClick={collapseAllGroups} disabled={deleting}>
+                <button
+                  className="btn"
+                  onClick={collapseAllGroups}
+                  disabled={deleting}
+                >
                   Collapse all groups
                 </button>
               </div>
 
               <div className="button-group">
-                <button className="btn-primary" onClick={handleDeleteSelected} disabled={selectedCount === 0 || deleting}>
+                <button
+                  className="btn-primary"
+                  onClick={handleDeleteSelected}
+                  disabled={selectedCount === 0 || deleting}
+                >
                   Delete selected
                 </button>
-                {deleteMessage && <span className="status-text">{deleteMessage}</span>}
+                {deleteMessage && (
+                  <span className="status-text">{deleteMessage}</span>
+                )}
                 {deleteProgress && (
                   <div className="delete-progress">
-                    <div className="delete-progress-bar" style={{ width: `${(deleteProgress.done / deleteProgress.total) * 100}%` }} />
+                    <div
+                      className="delete-progress-bar"
+                      style={{
+                        width: `${
+                          (deleteProgress.done / deleteProgress.total) * 100
+                        }%`,
+                      }}
+                    />
                     <span className="delete-progress-text">
-                      Deleting {deleteProgress.done}/{deleteProgress.total}…
+                      Deleting {deleteProgress.done}/
+                      {deleteProgress.total}…
                     </span>
                   </div>
                 )}
@@ -437,7 +553,9 @@ const App: React.FC = () => {
             {loading && !recordings.length ? (
               <div className="rec-table-empty">Loading recordings…</div>
             ) : !filteredRecordings.length ? (
-              <div className="rec-table-empty">No recordings match this range/search.</div>
+              <div className="rec-table-empty">
+                No recordings match this range/search.
+              </div>
             ) : (
               <RecordingsTable
                 ownerGroups={ownerGroups}
@@ -457,7 +575,9 @@ const App: React.FC = () => {
             <div className="pager">
               <div className="pager-buttons">
                 <button
-                  onClick={() => setPageIndex((idx) => Math.max(0, idx - 1))}
+                  onClick={() =>
+                    setPageIndex((idx) => Math.max(0, idx - 1))
+                  }
                   disabled={safePageIndex <= 0 || deleting}
                   className="pager-btn"
                 >
@@ -465,7 +585,9 @@ const App: React.FC = () => {
                 </button>
                 <button
                   onClick={() =>
-                    setPageIndex((idx) => (idx + 1 < totalPages ? idx + 1 : idx))
+                    setPageIndex((idx) =>
+                      idx + 1 < totalPages ? idx + 1 : idx
+                    )
                   }
                   disabled={safePageIndex + 1 >= totalPages || deleting}
                   className="pager-btn"
@@ -482,14 +604,17 @@ const App: React.FC = () => {
                 </button>
                 <button
                   onClick={onApiNext}
-                  disabled={!nextToken || !nextToken.length || loading}
+                  disabled={
+                    !nextToken || !nextToken.length || loading
+                  }
                   className="pager-btn"
                 >
                   API next »
                 </button>
               </div>
               <div>
-                API next token: {nextToken && nextToken.length ? nextToken : "—"}
+                API next token:{" "}
+                {nextToken && nextToken.length ? nextToken : "—"}
               </div>
             </div>
           </section>
