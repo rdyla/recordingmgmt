@@ -41,14 +41,13 @@ body {
   color: #9ca3af;
 }
 
+/* Main area fills the rest of the viewport and lets children scroll */
 .app-main {
   flex: 1;
   padding: 20px 24px 32px;
-
-  /* Make main area a flex column and keep it inside viewport */
   display: flex;
   flex-direction: column;
-  min-height: 0; /* important for nested flex scrolling */
+  min-height: 0; /* critical so children can scroll */
 }
 
 .app-main-inner {
@@ -57,12 +56,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  flex: 1;       /* fill vertical space */
-  min-height: 0; /* let children scroll */
+  flex: 1;
+  min-height: 0;
 }
 
-/* ---- Cards ---- */
-
+/* The card contains header controls + scrollable table */
 .app-card {
   background-color: #020617;
   border: 1px solid #1f2937;
@@ -70,32 +68,30 @@ body {
   padding: 16px 20px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.85);
 
-  /* Make card itself a flex column */
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
 }
 
-/* ---- Table wrapper & table ---- */
+/* ---- TABLE: single, non-conflicting definition ---- */
 
-/* This is the *only* table-wrapper block now */
+/* This is the scroll container – vertical AND horizontal. */
 .table-wrapper {
   margin-top: 4px;
-  flex: 1 1 auto;   /* take remaining height in the card */
+  flex: 1 1 auto;  /* take remaining height in card */
   min-height: 0;
   max-height: 100%;
-  overflow: auto;   /* vertical + horizontal scroll inside */
-  border-radius: 8px;
+  overflow: auto;  /* scroll inside the card */
 }
 
-/* This is the *only* rec-table block now */
+/* Table: fills width, can grow horizontally, no squish */
 .rec-table {
   border-collapse: collapse;
   font-size: 13px;
   width: 100%;
-  table-layout: auto;    /* let columns size naturally */
-  min-width: 900px;      /* so columns don’t get squished */
+  table-layout: auto;
+  min-width: 900px; /* so columns have breathing room on normal screens */
 }
 
 .rec-table th,
