@@ -473,7 +473,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Row 2: search + page controls + delete */}
+            {/* Row 2: search + delete button */}
             <div className="filters-row" style={{ marginTop: 12 }}>
               <div className="filter-group flex-1">
                 <label className="filter-label">Search</label>
@@ -505,7 +505,6 @@ const App: React.FC = () => {
                 className="flex gap-3 items-end"
                 style={{ alignSelf: "stretch", justifyContent: "flex-end" }}
               >
-
                 <button
                   className="btn-primary"
                   onClick={openDeleteModal}
@@ -612,62 +611,67 @@ const App: React.FC = () => {
               />
             )}
 
+            {/* Bottom pager */}
             <div className="pager" style={{ marginTop: 12 }}>
-                      <div className="pager-buttons">
-                        <button
-                          onClick={handlePrevPage}
-                          disabled={safePageIndex <= 0 || deleting}
-                          className="pager-btn"
-                        >
-                          Prev page
-                        </button>
-                        <button
-                          onClick={handleNextPage}
-                          disabled={safePageIndex + 1 >= totalPages || deleting}
-                          className="pager-btn"
-                        >
-                          Next page
-                        </button>
-                      </div>
-                      <div>
-                        Page {totalPages ? safePageIndex + 1 : 0} / {totalPages}
-                      </div>
-                    </div>
+              <div className="pager-buttons">
+                <button
+                  onClick={handlePrevPage}
+                  disabled={safePageIndex <= 0 || deleting}
+                  className="pager-btn"
+                >
+                  Prev page
+                </button>
+                <button
+                  onClick={handleNextPage}
+                  disabled={safePageIndex + 1 >= totalPages || deleting}
+                  className="pager-btn"
+                >
+                  Next page
+                </button>
+              </div>
+              <div>
+                Page {totalPages ? safePageIndex + 1 : 0} / {totalPages}
+              </div>
+            </div>
           </section>
         </div>
 
         {/* Delete review modal */}
         {showDeleteModal && (
-          <div className="delete-modal-backdrop">
-            <div className="delete-modal">
-              <h2 className="delete-modal-title">
-                Review &amp; delete recordings
-              </h2>
-              <p className="delete-modal-text">
+          <div className="modal-backdrop">
+            <div className="modal-card">
+              <h2 className="modal-title">Review &amp; delete recordings</h2>
+              <p className="modal-subtitle">
                 You are about to delete{" "}
                 <strong>{pendingDelete.length}</strong> recording
-                {pendingDelete.length !== 1 ? "s" : ""}. This will move them
-                to the Zoom trash (or remove them in demo mode).
+                {pendingDelete.length !== 1 ? "s" : ""}. This will move them to
+                the Zoom trash (or remove them in demo mode).
               </p>
 
-              <div className="delete-modal-summary">
-                <ul>
+              <div className="modal-body">
+                <div className="modal-list">
                   {pendingDelete.slice(0, 5).map((rec, idx) => (
-                    <li key={idx}>
-                      {rec.date_time
-                        ? new Date(rec.date_time).toLocaleString()
-                        : "—"}{" "}
-                      · {rec.topic || rec.caller_name || "Recording"} ·{" "}
-                      {rec.host_email || rec.owner?.name || "Unknown owner"}
-                    </li>
+                    <div key={idx} className="modal-list-item">
+                      <div className="modal-list-primary">
+                        {rec.date_time
+                          ? new Date(rec.date_time).toLocaleString()
+                          : "—"}{" "}
+                        · {rec.topic || rec.caller_name || "Recording"}
+                      </div>
+                      <div className="modal-list-meta">
+                        {rec.host_email || rec.owner?.name || "Unknown owner"}
+                      </div>
+                    </div>
                   ))}
                   {pendingDelete.length > 5 && (
-                    <li>…and {pendingDelete.length - 5} more</li>
+                    <div className="modal-list-more">
+                      …and {pendingDelete.length - 5} more
+                    </div>
                   )}
-                </ul>
+                </div>
               </div>
 
-              <div className="delete-modal-actions">
+              <div className="modal-footer">
                 <button
                   type="button"
                   className="pager-btn"
