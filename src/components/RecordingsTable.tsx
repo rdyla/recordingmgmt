@@ -190,7 +190,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                                 {" ("}
                                 {fileLinks.map((link, i) => (
                                   <React.Fragment key={i}>
-                                    {i > 0 && ", "}
+                                    {i > 0}
                                     {link}
                                   </React.Fragment>
                                 ))}
