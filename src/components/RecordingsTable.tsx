@@ -63,6 +63,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
 
             return (
               <React.Fragment key={group.key}>
+                {/* Group header row */}
                 <tr className="rec-row group-row">
                   <td>
                     <input
@@ -73,18 +74,11 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                       }
                     />
                   </td>
-                  {/* 6 remaining columns after the checkbox */}
                   <td colSpan={6}>
                     <button
                       type="button"
                       className="group-toggle"
                       onClick={() => toggleGroupCollapse(group.key)}
-                      style={{
-                        marginRight: 8,
-                        cursor: "pointer",
-                        border: "none",
-                        background: "transparent",
-                      }}
                     >
                       {collapsed ? "▶" : "▼"}
                     </button>
@@ -97,6 +91,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                   </td>
                 </tr>
 
+                {/* Child rows */}
                 {!collapsed &&
                   group.items.map(({ rec, globalIndex }: PageRecord) => {
                     const key = makeRecordKey(rec, globalIndex);
@@ -132,6 +127,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
 
                     const sizeDisplay = formatBytes(rec.file_size);
 
+                    // Files display
                     let filesDisplay: React.ReactNode = "—";
 
                     if (isMeeting) {
@@ -175,7 +171,11 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           )}&filename=${encodeURIComponent(filename)}`;
 
                           fileLinks.push(
-                            <a key={t} href={href} className="text-sky-400 hover:underline">
+                            <a
+                              key={t}
+                              href={href}
+                              className="text-sky-400 hover:underline"
+                            >
                               {t}
                             </a>
                           );
@@ -206,12 +206,21 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           rec.download_url
                         )}`;
                         filesDisplay = (
-                          <a href={href} className="text-sky-400 hover:underline">
+                          <a
+                            href={href}
+                            className="text-sky-400 hover:underline"
+                          >
                             Recording
                           </a>
                         );
                       }
                     }
+
+                    // Auto-delete date: only show date if present
+                    const autoDeleteDate =
+                      (rec as any).autoDeleteDate ??
+                      (rec as any).auto_delete_date ??
+                      "";
 
                     return (
                       <tr key={key} className="rec-row">
@@ -219,7 +228,9 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           <input
                             type="checkbox"
                             checked={selectedKeys.has(key)}
-                            onChange={() => toggleRowSelection(rec, globalIndex)}
+                            onChange={() =>
+                              toggleRowSelection(rec, globalIndex)
+                            }
                           />
                         </td>
                         <td>{dateDisplay}</td>
@@ -227,11 +238,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                         <td>{ownerDisplay}</td>
                         <td>{filesDisplay}</td>
                         <td>{sizeDisplay}</td>
-                        <td>
-                          {isMeeting && (rec as any).autoDeleteDate
-                            ? (rec as any).autoDeleteDate
-                            : ""}
-                        </td>
+                        <td>{isMeeting && autoDeleteDate ? autoDeleteDate : ""}</td>
                       </tr>
                     );
                   })}
