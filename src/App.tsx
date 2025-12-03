@@ -40,7 +40,7 @@ const App: React.FC = () => {
     useState<MeetingIdentity | null>(null);
   const [demoMode] = useState<boolean>(() => useInitialDemoMode());
 
-  // NEW: auto-delete filter (meetings only)
+  // Auto-delete filter (meetings only)
   const [autoDeleteFilter, setAutoDeleteFilter] = useState<
     "all" | "auto" | "manual"
   >("all");
@@ -50,12 +50,8 @@ const App: React.FC = () => {
     recordings,
     loading,
     error,
-    nextToken,
-    prevTokens,
     currentToken,
     handleSearch,
-    handleNext,
-    handlePrev,
     fetchRecordings,
     setData,
   } = useRecordings(from, to, pageSize, source, demoMode);
@@ -110,15 +106,14 @@ const App: React.FC = () => {
           if (source !== "meetings") return true;
 
           if (autoDeleteFilter === "all") return true;
+
+          const val: boolean | null | undefined =
+            (rec as any).autoDelete ?? (rec as any).auto_delete;
+
           if (autoDeleteFilter === "auto") {
-            // We’ll look for the camelCase field if present, or fall back
-            const val: boolean | null | undefined =
-              (rec as any).autoDelete ?? (rec as any).auto_delete;
             return val === true;
           }
           if (autoDeleteFilter === "manual") {
-            const val: boolean | null | undefined =
-              (rec as any).autoDelete ?? (rec as any).auto_delete;
             return val === false;
           }
 
@@ -210,18 +205,6 @@ const App: React.FC = () => {
     setPageIndex(0);
     clearSelection();
     handleSearch();
-  };
-
-  const onApiNext = () => {
-    setPageIndex(0);
-    clearSelection();
-    handleNext();
-  };
-
-  const onApiPrev = () => {
-    setPageIndex(0);
-    clearSelection();
-    handlePrev();
   };
 
   const handleDeleteSelected = async () => {
@@ -338,6 +321,7 @@ const App: React.FC = () => {
       <main className="app-main">
         <div className="app-main-inner">
           <section className="app-card">
+            {/* Filters */}
             <div className="filters-row">
               <div className="filter-group">
                 <label className="filter-label">From</label>
@@ -369,7 +353,6 @@ const App: React.FC = () => {
                     setSource(newSource);
                     setPageIndex(0);
                     clearSelection();
-                    // reset auto-delete filter when leaving meetings
                     if (newSource !== "meetings") {
                       setAutoDeleteFilter("all");
                     }
@@ -405,7 +388,11 @@ const App: React.FC = () => {
                   type="number"
                   className="form-control"
                   value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || 1;
+                    setPageSize(val);
+                    setPageIndex(0);
+                  }}
                 />
               </div>
 
@@ -435,6 +422,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* Top status / summary */}
             <div className="actions-row">
               <div className="status-group">
                 <span>
@@ -449,47 +437,9 @@ const App: React.FC = () => {
                 </span>
                 {error && <span className="error-text">Error: {error}</span>}
               </div>
-
-              <div className="button-group">
-                <button
-                  className="pager-btn"
-                  onClick={() =>
-                    setPageIndex((idx) => Math.max(0, idx - 1))
-                  }
-                  disabled={safePageIndex <= 0 || deleting}
-                >
-                  Prev page
-                </button>
-                <button
-                  className="pager-btn"
-                  onClick={() =>
-                    setPageIndex((idx) =>
-                      idx + 1 < totalPages ? idx + 1 : idx
-                    )
-                  }
-                  disabled={safePageIndex + 1 >= totalPages || deleting}
-                >
-                  Next page
-                </button>
-                <button
-                  className="pager-btn"
-                  onClick={onApiPrev}
-                  disabled={!prevTokens.length || loading}
-                >
-                  « API prev
-                </button>
-                <button
-                  className="pager-btn"
-                  onClick={onApiNext}
-                  disabled={
-                    !nextToken || !nextToken.length || loading
-                  }
-                >
-                  API next »
-                </button>
-              </div>
             </div>
 
+            {/* Selection + delete bar */}
             <div className="actions-row">
               <div className="status-group">
                 <label className="filter-label">Selected</label>
@@ -499,20 +449,20 @@ const App: React.FC = () => {
                   value={selectedCount}
                 />
                 <button
-                  className="pager-btn"
+                  className="btn"
                   onClick={() => setSelectedKeys(new Set())}
                 >
                   Clear
                 </button>
                 <button
-                  className="pager-btn"
+                  className="btn"
                   onClick={expandAllGroups}
                   disabled={deleting}
                 >
                   Expand all groups
                 </button>
                 <button
-                  className="pager-btn"
+                  className="btn"
                   onClick={collapseAllGroups}
                   disabled={deleting}
                 >
@@ -550,6 +500,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* Table */}
             {loading && !recordings.length ? (
               <div className="rec-table-empty">Loading recordings…</div>
             ) : !filteredRecordings.length ? (
@@ -572,6 +523,7 @@ const App: React.FC = () => {
               />
             )}
 
+            {/* Bottom pager – single source of truth for paging */}
             <div className="pager">
               <div className="pager-buttons">
                 <button
@@ -594,27 +546,10 @@ const App: React.FC = () => {
                 >
                   Next page
                 </button>
-
-                <button
-                  onClick={onApiPrev}
-                  disabled={!prevTokens.length || loading}
-                  className="pager-btn"
-                >
-                  « API prev
-                </button>
-                <button
-                  onClick={onApiNext}
-                  disabled={
-                    !nextToken || !nextToken.length || loading
-                  }
-                  className="pager-btn"
-                >
-                  API next »
-                </button>
               </div>
               <div>
-                API next token:{" "}
-                {nextToken && nextToken.length ? nextToken : "—"}
+                Page {safePageIndex + 1} of {totalPages} · Showing{" "}
+                {pageRecords.length} of {totalFiltered} filtered
               </div>
             </div>
           </section>
