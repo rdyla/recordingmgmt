@@ -471,7 +471,7 @@ const App: React.FC = () => {
                 >
                   Next page
                 </button>
-                {/* <button
+                <button
                   className="pager-btn"
                   onClick={onApiPrev}
                   disabled={!prevTokens.length || loading}
@@ -486,7 +486,7 @@ const App: React.FC = () => {
                   }
                 >
                   API next »
-                </button> */}
+                </button>
               </div>
             </div>
 
@@ -595,7 +595,7 @@ const App: React.FC = () => {
                   Next page
                 </button>
 
-                {/* <button
+                <button
                   onClick={onApiPrev}
                   disabled={!prevTokens.length || loading}
                   className="pager-btn"
@@ -610,7 +610,7 @@ const App: React.FC = () => {
                   className="pager-btn"
                 >
                   API next »
-                </button> */}
+                </button>
               </div>
               <div>
                 API next token:{" "}
