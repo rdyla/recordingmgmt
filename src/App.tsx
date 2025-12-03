@@ -682,7 +682,7 @@ const App: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  className="btn-primary"
+                  className="btn-danger"
                   onClick={handleConfirmDelete}
                   disabled={deleting}
                 >
