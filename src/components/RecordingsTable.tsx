@@ -3,6 +3,12 @@ import type { OwnerGroup, PageRecord } from "../hooks/useOwnerGroups";
 import type { Recording } from "../types";
 import { formatBytes } from "../utils/recordingFormatters";
 
+export type MeetingAnalytics = {
+  plays: number; // views_total_count
+  downloads: number; // downloads_total_count
+  lastAccessDate: string; // YYYY-MM-DD (or "" if never accessed)
+};
+
 export type RecordingsTableProps = {
   ownerGroups: OwnerGroup[];
   isGroupCollapsed: (groupKey: string) => boolean;
@@ -15,6 +21,9 @@ export type RecordingsTableProps = {
   selectAllOnPage: (checked: boolean) => void;
   allOnPageSelected: boolean;
   demoMode: boolean;
+
+  /** NEW: meetingId -> analytics stats */
+  analyticsByMeetingId?: Record<string, MeetingAnalytics | undefined>;
 };
 
 const RecordingsTable: React.FC<RecordingsTableProps> = ({
@@ -29,6 +38,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
   selectAllOnPage,
   allOnPageSelected,
   demoMode,
+  analyticsByMeetingId = {},
 }) => {
   return (
     <div className="table-wrapper">
@@ -47,6 +57,12 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
             <th>Owner / Host</th>
             <th>Files</th>
             <th>Size</th>
+
+            {/* NEW analytics columns */}
+            <th>Plays</th>
+            <th>Downloads</th>
+            <th>Last access</th>
+
             <th>Auto-delete date</th>
           </tr>
         </thead>
@@ -74,7 +90,9 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                       }
                     />
                   </td>
-                  <td colSpan={6}>
+
+                  {/* UPDATED colSpan: total columns = 10, first checkbox column already used, so span the remaining 9 */}
+                  <td colSpan={9}>
                     <button
                       type="button"
                       className="group-toggle"
@@ -171,11 +189,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           )}&filename=${encodeURIComponent(filename)}`;
 
                           fileLinks.push(
-                            <a
-                              key={t}
-                              href={href}
-                              className="file-pill"
-                            >
+                            <a key={t} href={href} className="file-pill">
                               {t}
                             </a>
                           );
@@ -183,19 +197,11 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
 
                         filesDisplay = (
                           <>
-                            {fileCount} file
-                            {fileCount !== 1 ? "s" : ""}
+                            {fileCount} file{fileCount !== 1 ? "s" : ""}
                             {fileLinks.length > 0 && (
-                              <>
-                                {" ("}
-                                {fileLinks.map((link, i) => (
-                                  <React.Fragment key={i}>
-                                    {i > 0}
-                                    {link}
-                                  </React.Fragment>
-                                ))}
-                                {")"}
-                              </>
+                              <span className="files-cell">
+                                {fileLinks}
+                              </span>
                             )}
                           </>
                         );
@@ -206,11 +212,8 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           rec.download_url
                         )}`;
                         filesDisplay = (
-                          <a
-                            href={href}
-                            className="text-sky-400 hover:underline"
-                          >
-                            Recording
+                          <a href={href} className="file-pill">
+                            RECORDING
                           </a>
                         );
                       }
@@ -222,15 +225,26 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                       (rec as any).auto_delete_date ??
                       "";
 
+                    // NEW: analytics (meetings only)
+                    const meetingId = isMeeting
+                      ? String((rec as any).meetingId ?? "")
+                      : "";
+                    const stats = isMeeting && meetingId ? analyticsByMeetingId[meetingId] : undefined;
+
+                    const playsDisplay =
+                      isMeeting ? (stats ? String(stats.plays ?? 0) : "…") : "—";
+                    const downloadsDisplay =
+                      isMeeting ? (stats ? String(stats.downloads ?? 0) : "…") : "—";
+                    const lastAccessDisplay =
+                      isMeeting ? (stats ? (stats.lastAccessDate || "—") : "…") : "—";
+
                     return (
                       <tr key={key} className="rec-row">
                         <td>
                           <input
                             type="checkbox"
                             checked={selectedKeys.has(key)}
-                            onChange={() =>
-                              toggleRowSelection(rec, globalIndex)
-                            }
+                            onChange={() => toggleRowSelection(rec, globalIndex)}
                           />
                         </td>
                         <td>{dateDisplay}</td>
@@ -238,6 +252,12 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                         <td>{ownerDisplay}</td>
                         <td>{filesDisplay}</td>
                         <td>{sizeDisplay}</td>
+
+                        {/* NEW analytics cells */}
+                        <td>{playsDisplay}</td>
+                        <td>{downloadsDisplay}</td>
+                        <td>{lastAccessDisplay}</td>
+
                         <td>{isMeeting && autoDeleteDate ? autoDeleteDate : ""}</td>
                       </tr>
                     );

@@ -70,6 +70,19 @@ export type Recording = {
   autoDeleteDate?: string | null; // "YYYY-MM-DD"
 };
 
+export type AnalyticsRow = {
+  date?: string;
+  views_total_count?: number;
+  downloads_total_count?: number;
+};
+
+export type MeetingAnalyticsStats = {
+  meetingId: string;
+  plays: number;
+  downloads: number;
+  lastAccessDate: string; // YYYY-MM-DD or ""
+};
+
 export type ApiResponse = {
   next_page_token?: string | null;
   page_size?: number;

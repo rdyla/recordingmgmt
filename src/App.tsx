@@ -71,6 +71,8 @@ const App: React.FC = () => {
     applySelection,
   } = useSelection();
 
+  const [analyticsByMeetingId, setAnalyticsByMeetingId] = useState < Record < string, MeetingAnalyticsStats | undefined>>({});
+
   const normalizedQuery = query.trim().toLowerCase();
 
   const makeRecordKey = useCallback((rec: Recording, idx: number): string => {
@@ -154,6 +156,75 @@ const App: React.FC = () => {
     [filteredRecordings, makeRecordKey, selectedKeys]
   );
 
+    useEffect(() => {
+    if (demoMode) return;
+    if (source !== "meetings") return;
+
+    // Use API-adjusted range if available (since your worker echoes api.from/to)
+    const fromStr = data?.from ?? from;
+    const toStr = data?.to ?? to;
+
+    // Only fetch for meetings on the current page
+    const meetingIds = Array.from(
+      new Set(
+        pageRecords
+          .map((r) => (r as any).meetingId)
+          .filter((id) => typeof id === "string" && id.length > 0)
+      )
+    );
+
+    if (!meetingIds.length) return;
+
+    let cancelled = false;
+
+    (async () => {
+      // Fetch only missing ones
+      const missing = meetingIds.filter((id) => analyticsByMeetingId[id] == null);
+      if (!missing.length) return;
+
+      // Throttle concurrency a bit
+      const concurrency = 6;
+      let idx = 0;
+
+      const worker = async () => {
+        while (idx < missing.length) {
+          const i = idx++;
+          const id = missing[i];
+          const stats = await fetchMeetingAnalytics(id, fromStr, toStr);
+
+          if (cancelled) return;
+
+          setAnalyticsByMeetingId((prev) => ({
+            ...prev,
+            [id]: stats || { plays: 0, downloads: 0, lastAccessDate: "" },
+          }));
+        }
+      };
+
+      await Promise.all(
+        Array.from(
+          { length: Math.min(concurrency, missing.length) },
+          () => worker()
+        )
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    demoMode,
+    source,
+    from,
+    to,
+    data?.from,
+    data?.to,
+    pageRecords,
+    analyticsByMeetingId,
+    fetchMeetingAnalytics,
+  ]);
+
+
   const allOnPageSelected =
     pageRecords.length > 0 &&
     pageRecords.every((rec, idx) =>
@@ -186,6 +257,37 @@ const App: React.FC = () => {
     selectedKeys,
     setSelectedKeys
   );
+
+    useEffect(() => {
+    if (source !== "meetings") return;
+    if (!pageRecordsWithIndex.length) return;
+
+    const meetingIds = Array.from(
+      new Set(
+        pageRecordsWithIndex
+          .map(({ rec }) => rec.meetingId)
+          .filter((id): id is string => !!id)
+      )
+    ).filter((id) => !analyticsByMeetingId[id]);
+
+    if (!meetingIds.length) return;
+
+    const tasks = meetingIds.map((meetingId) => async () => {
+      const stats = await fetchMeetingAnalyticsSummary(meetingId);
+      if (!stats) return;
+      setAnalyticsByMeetingId((prev) => ({ ...prev, [meetingId]: stats }));
+    });
+
+    // Be gentle: Zoom rate limits can be tight.
+    runLimited(4, tasks);
+  }, [
+    source,
+    pageRecordsWithIndex,
+    analyticsByMeetingId,
+    fetchMeetingAnalyticsSummary,
+    runLimited,
+  ]);
+
 
   useEffect(() => {
     const loadMeetingIdentity = async () => {
@@ -246,6 +348,86 @@ const App: React.FC = () => {
 
     let success = 0;
     let failed = 0;
+
+    const fetchMeetingAnalyticsSummary = useCallback(
+    async (meetingId: string): Promise<MeetingAnalyticsStats | null> => {
+      try {
+        const res = await fetch(
+          `/api/meeting/recordings/analytics_summary?meetingId=${encodeURIComponent(
+            meetingId
+          )}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+        );
+        if (!res.ok) return null;
+
+        const json = await res.json();
+        const rows: AnalyticsRow[] = Array.isArray(json?.analytics_summary)
+          ? json.analytics_summary
+          : [];
+
+        let plays = 0;
+        let downloads = 0;
+        let lastAccessDate = "";
+
+        for (const r of rows) {
+          const d = String(r?.date || "").slice(0, 10);
+          const v = Number(r?.views_total_count ?? 0) || 0;
+          const dl = Number(r?.downloads_total_count ?? 0) || 0;
+
+          plays += v;
+          downloads += dl;
+
+          // infer "last access" as latest date with any activity
+          if (d && (v > 0 || dl > 0)) {
+            if (!lastAccessDate || d > lastAccessDate) lastAccessDate = d;
+          }
+        }
+
+        return { meetingId, plays, downloads, lastAccessDate };
+      } catch {
+        return null;
+      }
+    },
+    [from, to]
+  );
+
+  const fetchMeetingAnalytics = useCallback(
+  async (meetingId: string, fromStr: string, toStr: string) => {
+    const params = new URLSearchParams();
+    params.set("meetingId", meetingId);
+    params.set("from", fromStr);
+    params.set("to", toStr);
+
+    const res = await fetch(
+      `/api/meeting/recordings/analytics_summary?${params.toString()}`
+    );
+    if (!res.ok) {
+      // Don’t throw — just mark as empty so UI doesn’t spin forever
+      return null;
+    }
+    const json = await res.json();
+    if (!json?.ok) return null;
+
+    return {
+      plays: Number(json.plays ?? 0),
+      downloads: Number(json.downloads ?? 0),
+      lastAccessDate: String(json.lastAccessDate ?? ""),
+    } as MeetingAnalytics;
+  },
+  []
+);
+
+const runLimited = useCallback(async (limit: number, tasks: Array<() => Promise<void>>) => {
+  const queue = [...tasks];
+  const workers = new Array(Math.min(limit, queue.length)).fill(0).map(async () => {
+    while (queue.length) {
+      const t = queue.shift();
+      if (!t) return;
+      await t();
+    }
+  });
+  await Promise.all(workers);
+}, []);
+
 
     try {
       for (let i = 0; i < toDelete.length; i++) {
@@ -596,19 +778,20 @@ const App: React.FC = () => {
                 No recordings match this range/search.
               </div>
             ) : (
-              <RecordingsTable
-                ownerGroups={ownerGroups}
-                isGroupCollapsed={isGroupCollapsed}
-                toggleGroupCollapse={toggleGroupCollapse}
-                isGroupFullySelected={isGroupFullySelected}
-                toggleGroupSelection={toggleGroupSelection}
-                makeRecordKey={makeRecordKey}
-                toggleRowSelection={toggleRowSelection}
-                selectedKeys={selectedKeys}
-                selectAllOnPage={selectAllOnPage}
-                allOnPageSelected={allOnPageSelected}
-                demoMode={demoMode}
-              />
+                <RecordingsTable
+                  ownerGroups={ownerGroups}
+                  isGroupCollapsed={isGroupCollapsed}
+                  toggleGroupCollapse={toggleGroupCollapse}
+                  isGroupFullySelected={isGroupFullySelected}
+                  toggleGroupSelection={toggleGroupSelection}
+                  makeRecordKey={makeRecordKey}
+                  toggleRowSelection={toggleRowSelection}
+                  selectedKeys={selectedKeys}
+                  selectAllOnPage={selectAllOnPage}
+                  allOnPageSelected={allOnPageSelected}
+                  demoMode={demoMode}
+                  analyticsByMeetingId={analyticsByMeetingId}
+                />
             )}
 
             {/* Bottom pager */}

@@ -220,6 +220,59 @@ async function handleDeletePhoneRecording(req, env) {
   });
 }
 
+/* -------------------- MEETING RECORDING ANALYTICS SUMMARY -------------------- */
+
+async function handleGetMeetingRecordingAnalyticsSummary(req, env) {
+  const url = new URL(req.url);
+
+  const meetingId = url.searchParams.get("meetingId") || "";
+  const from = url.searchParams.get("from") || "";
+  const to = url.searchParams.get("to") || "";
+
+  if (!meetingId || !from || !to) {
+    return json(400, { error: "Missing meetingId/from/to" });
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  // Zoom UUID encoding can be weird. Match your delete logic (double-encode when needed).
+  const rawMeetingId = String(meetingId);
+  let meetingPathId = rawMeetingId;
+  if (meetingPathId.startsWith("/") || meetingPathId.includes("//")) {
+    meetingPathId = encodeURIComponent(meetingPathId); // first encode
+  }
+  meetingPathId = encodeURIComponent(meetingPathId); // always encode for URL
+
+  const zoomUrl = new URL(
+    `${ZOOM_API_BASE}/meetings/${meetingPathId}/recordings/analytics_summary`
+  );
+  zoomUrl.searchParams.set("from", from);
+  zoomUrl.searchParams.set("to", to);
+
+  const zoomRes = await fetch(zoomUrl.toString(), {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const text = await zoomRes.text();
+
+  // Pass through JSON as-is (or raw text wrapper)
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = { raw: text };
+  }
+
+  return new Response(JSON.stringify(body), {
+    status: zoomRes.status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
 /* -------------------- DELETE MEETING RECORDINGS -------------------- */
 
 async function handleDeleteMeetingRecording(req, env) {
@@ -642,6 +695,42 @@ async function handleGetMeetingIdentity(req, env) {
   );
 }
 
+function encodeZoomMeetingIdForPath(meetingId) {
+  // Match your delete logic: some UUIDs contain / and require double-encoding
+  const raw = String(meetingId || "");
+  let pathId = raw;
+
+  if (pathId.startsWith("/") || pathId.includes("//")) {
+    pathId = encodeURIComponent(pathId); // first encode
+  }
+  pathId = encodeURIComponent(pathId); // always encode for URL
+  return pathId;
+}
+
+function summarizeAnalyticsSummary(apiJson) {
+  const arr = Array.isArray(apiJson?.analytics_summary)
+    ? apiJson.analytics_summary
+    : [];
+
+  let plays = 0;
+  let downloads = 0;
+  let lastAccessDate = ""; // YYYY-MM-DD max
+
+  for (const row of arr) {
+    const v = Number(row?.views_total_count ?? 0);
+    const d = Number(row?.downloads_total_count ?? 0);
+    if (!Number.isNaN(v)) plays += v;
+    if (!Number.isNaN(d)) downloads += d;
+
+    const date = typeof row?.date === "string" ? row.date : "";
+    if (date && (!lastAccessDate || date > lastAccessDate)) {
+      lastAccessDate = date; // ISO date compare works lexicographically
+    }
+  }
+
+  return { plays, downloads, lastAccessDate };
+}
+
 /* -------------------- DOWNLOAD PROXY (PHONE) -------------------- */
 
 async function handleDownloadRecording(req, env) {
@@ -756,6 +845,67 @@ function json(status, obj) {
   });
 }
 
+async function handleGetMeetingRecordingAnalyticsSummary(req, env) {
+  try {
+    const url = new URL(req.url);
+    const meetingId = url.searchParams.get("meetingId") || "";
+    const from = url.searchParams.get("from") || "";
+    const to = url.searchParams.get("to") || "";
+
+    if (!meetingId) return json(400, { error: "Missing meetingId" });
+    if (!from || !to) return json(400, { error: "Missing from/to" });
+
+    const token = await getZoomAccessToken(env);
+
+    const meetingPathId = encodeZoomMeetingIdForPath(meetingId);
+
+    const zoomUrl = new URL(
+      `${ZOOM_API_BASE}/meetings/${meetingPathId}/recordings/analytics_summary`
+    );
+    zoomUrl.searchParams.set("from", from);
+    zoomUrl.searchParams.set("to", to);
+
+    const zoomRes = await fetch(zoomUrl.toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const text = await zoomRes.text();
+    let body;
+    try {
+      body = text ? JSON.parse(text) : {};
+    } catch {
+      body = { raw: text };
+    }
+
+    if (!zoomRes.ok) {
+      console.log("ANALYTICS SUMMARY non-OK", {
+        status: zoomRes.status,
+        zoomUrl: zoomUrl.toString(),
+        body: (text || "").slice(0, 500),
+      });
+
+      return json(zoomRes.status, {
+        error: true,
+        zoomStatus: zoomRes.status,
+        raw: body,
+      });
+    }
+
+    const summary = summarizeAnalyticsSummary(body);
+
+    return json(200, {
+      ok: true,
+      meetingId,
+      from: body?.from ?? from,
+      to: body?.to ?? to,
+      ...summary,
+    });
+  } catch (e) {
+    return json(500, { error: true, message: e?.message || String(e) });
+  }
+}
+
 /* -------------------- ROUTER -------------------- */
 
 export default {
@@ -775,6 +925,11 @@ export default {
     // Delete a single phone recording
     if (url.pathname === "/api/phone/recordings/delete" && req.method === "POST") {
       return handleDeletePhoneRecording(req, env);
+    }
+
+    // Meeting recording analytics summary
+    if (url.pathname === "/api/meeting/recordings/analytics_summary" && req.method === "GET") {
+      return handleGetMeetingRecordingAnalyticsSummary(req, env);
     }
 
     // Meeting recordings (aggregated)
