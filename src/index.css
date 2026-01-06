@@ -291,16 +291,22 @@ input[type="date"].form-control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 28px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.06);
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #9dd6ff; /* bright sky blue */
+  border: 1px solid rgba(157, 214, 255, 0.25);
   cursor: pointer;
 }
 
 .icon-btn:hover {
-  background: rgba(255,255,255,0.10);
+  background: rgba(157, 214, 255, 0.15);
+  color: #cbe9ff;
+  border-color: rgba(157, 214, 255, 0.45);
+}
+
+.icon-btn:active {
+  background: rgba(157, 214, 255, 0.25);
 }
 
 /* Dropdown menu */
@@ -311,14 +317,14 @@ input[type="date"].form-control {
 
 .download-menu {
   position: absolute;
-  top: calc(100% + 6px);
   right: 0;
-  min-width: 180px;
-  padding: 8px;
-  border-radius: 12px;
-  background: rgba(20, 20, 24, 0.98);
-  border: 1px solid rgba(255,255,255,0.12);
-  box-shadow: 0 16px 40px rgba(0,0,0,0.35);
+  top: 100%;
+  margin-top: 6px;
+  min-width: 160px;
+  background: #0f172a; /* dark slate */
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
   z-index: 50;
 }
 
@@ -330,13 +336,20 @@ input[type="date"].form-control {
 
 .download-menu-item {
   display: block;
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: 8px 12px;
+  color: #e5f3ff; /* very light */
+  font-weight: 500;
   text-decoration: none;
+  border-radius: 6px;
+}
+
+.download-menu-item + .download-menu-item {
+  margin-top: 2px;
 }
 
 .download-menu-item:hover {
-  background: rgba(255,255,255,0.08);
+  background: rgba(157, 214, 255, 0.18);
+  color: #ffffff;
 }
 
 /* Firefox tweak */
