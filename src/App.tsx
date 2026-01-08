@@ -1004,9 +1004,22 @@ const fetchMeetingAnalyticsSummary = useCallback(
             )}
 
             {/* Contact Center download queue drawer */}
-              {source === "cc" && ccQueueOpen && (
-                <div className="app-card" style={{ marginTop: 12 }}>
-                  <div className="actions-row" style={{ display: "flex", justifyContent: "space-between" }}>
+{source === "cc" && ccQueueOpen && (
+  <div
+    className="app-card"
+    style={{
+      position: "fixed",
+      left: 16,
+      right: 16,
+      bottom: 16,
+      zIndex: 50,
+      maxHeight: "45vh",
+      overflow: "hidden",
+      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    }}
+  >
+    <div className="actions-row" style={{ display: "flex", justifyContent: "space-between" }}>
+      {/* header + controls */}
                     <div className="status-group">
                       <strong>Download queue</strong>{" "}
                       <span style={{ opacity: 0.8 }}>
