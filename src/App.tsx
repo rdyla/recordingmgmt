@@ -16,20 +16,11 @@ import type {
   Recording,
   SourceFilter,
 } from "./types";
+import type { CCQueueItem } from "./types/downloadQueue";
 
 import { safeString as S } from "./utils/recordingFormatters";
 
 type QueueStatus = "queued" | "downloading" | "done" | "failed";
-
-type CCQueueItem = {
-  key: string; // unique: `${recording_id}|recording` or `${recording_id}|transcript`
-  recordingId: string;
-  kind: "recording" | "transcript";
-  url: string; // Zoom download/transcript URL
-  filename: string;
-  status: QueueStatus;
-  error?: string;
-};
 
 const QUEUE_LS_KEY = "cc_download_queue_v1";
 
