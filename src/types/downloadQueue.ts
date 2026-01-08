@@ -1,4 +1,4 @@
-export type QueueItemStatus = "queued" | "downloading" | "done" | "failed";
+export type QueueStatus = "queued" | "downloading" | "done" | "failed";
 
 export type CCQueueItem = {
   key: string;

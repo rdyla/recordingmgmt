@@ -16,11 +16,9 @@ import type {
   Recording,
   SourceFilter,
 } from "./types";
-import type { CCQueueItem } from "./types/downloadQueue";
+import type { CCQueueItem, QueueStatus } from "./types/downloadQueue";
 
 import { safeString as S } from "./utils/recordingFormatters";
-
-type QueueStatus = "queued" | "downloading" | "done" | "failed";
 
 const QUEUE_LS_KEY = "cc_download_queue_v1";
 
