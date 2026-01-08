@@ -15,8 +15,8 @@ import type {
   MeetingIdentity,
   Recording,
   SourceFilter,
+  CCQueueItem,
 } from "./types";
-import type { CCQueueItem, QueueStatus } from "./types/downloadQueue";
 
 import { safeString as S } from "./utils/recordingFormatters";
 
