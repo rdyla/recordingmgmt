@@ -50,7 +50,6 @@ const datePart = (iso?: string) => {
   }
 };
 
-
 const todayStr = new Date().toISOString().slice(0, 10);
 
 const useInitialDemoMode = (): boolean => {
@@ -70,6 +69,12 @@ const App: React.FC = () => {
   const [ccQueue, setCcQueue] = useState<CCQueueItem[]>([]);
   const [ccQueueOpen, setCcQueueOpen] = useState(false);
   const [ccQueueRunning, setCcQueueRunning] = useState(false);
+
+
+  const ccQueueRef = React.useRef<CCQueueItem[]>([]);
+  useEffect(() => {
+  ccQueueRef.current = ccQueue;
+}, [ccQueue]);
 
   const ccQueueRunningRef = React.useRef(false);
   useEffect(() => {
@@ -495,50 +500,60 @@ const fetchMeetingAnalyticsSummary = useCallback(
     a.click();
     a.remove();
 
+    /* quick check if queue running */
+    console.log("QUEUE DOWNLOAD", item.key, item.url);
+
     URL.revokeObjectURL(blobUrl);
   }, []);
 
-  const runCcQueue = useCallback(async () => {
-    if (demoMode) return;
-    if (ccQueueRunningRef.current) return;
+        const runCcQueue = useCallback(async () => {
+        if (demoMode) return;
+        if (ccQueueRunningRef.current) return;
 
-    setCcQueueRunning(true);
+        // IMPORTANT: set ref immediately so the while loop can run
+        ccQueueRunningRef.current = true;
+        setCcQueueRunning(true);
 
-    while (ccQueueRunningRef.current) {
-      // find next queued/failed item
-      const next = ccQueue.find((x) => x.status === "queued" || x.status === "failed");
-      if (!next) break;
+        try {
+          while (ccQueueRunningRef.current) {
+            const next = ccQueueRef.current.find(
+              (x) => x.status === "queued" || x.status === "failed"
+            );
+            if (!next) break;
 
-      // mark downloading
-      setCcQueue((prev) =>
-        prev.map((x) =>
-          x.key === next.key ? { ...x, status: "downloading", error: undefined } : x
-        )
-      );
+            setCcQueue((prev) =>
+              prev.map((x) =>
+                x.key === next.key ? { ...x, status: "downloading", error: undefined } : x
+              )
+            );
 
-      try {
-        await downloadQueueItem(next);
-        setCcQueue((prev) =>
-          prev.map((x) => (x.key === next.key ? { ...x, status: "done" } : x))
-        );
-      } catch (e: any) {
-        setCcQueue((prev) =>
-          prev.map((x) =>
-            x.key === next.key
-              ? { ...x, status: "failed", error: e?.message || String(e) }
-              : x
-          )
-        );
-      }
+            try {
+              await downloadQueueItem(next);
 
-      // small delay to keep browser happy + avoid Zoom rate limiting spikes
-      await new Promise((r) => setTimeout(r, 250));
-    }
+              setCcQueue((prev) =>
+                prev.map((x) => (x.key === next.key ? { ...x, status: "done" } : x))
+              );
+            } catch (e: any) {
+              setCcQueue((prev) =>
+                prev.map((x) =>
+                  x.key === next.key
+                    ? { ...x, status: "failed", error: e?.message || String(e) }
+                    : x
+                )
+              );
+            }
 
-    setCcQueueRunning(false);
-      }, [ccQueue, demoMode, downloadQueueItem]);
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        } finally {
+          ccQueueRunningRef.current = false;
+          setCcQueueRunning(false);
+        }
+      }, [demoMode, downloadQueueItem]);
+
 
       const pauseCcQueue = useCallback(() => {
+        ccQueueRunningRef.current = false;
         setCcQueueRunning(false);
       }, []);
 
@@ -999,17 +1014,13 @@ const fetchMeetingAnalyticsSummary = useCallback(
 
                     <div className="status-group flex items-center gap-2">
                       {!ccQueueRunning ? (
-                        <button
-                          className="btn-primary"
-                          onClick={() => {
-                            setCcQueueRunning(true);
-                            // run loop next tick so state is set
-                            setTimeout(() => runCcQueue(), 0);
-                          }}
-                          disabled={demoMode || (ccCounts.total === 0)}
-                        >
-                          Start
-                        </button>
+                      <button
+                        className="btn-primary"
+                        onClick={runCcQueue}
+                        disabled={demoMode || ccCounts.total === 0}
+                      >
+                        Start
+                      </button>
                       ) : (
                         <button className="pager-btn" onClick={pauseCcQueue}>
                           Pause
