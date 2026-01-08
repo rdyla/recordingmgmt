@@ -524,6 +524,20 @@ const fetchMeetingAnalyticsSummary = useCallback(
                   >
                     Meetings
                   </button>
+                  <button
+                    type="button"
+                    className={
+                      "toggle-pill" + (source === "cc" ? " toggle-pill-active" : "")
+                    }
+                    onClick={() => {
+                      setSource("cc");
+                      setPageIndex(0);
+                      clearSelection();
+                      setAutoDeleteFilter("all"); // irrelevant for cc but harmless
+                    }}
+                  >
+                    Contact Center
+                  </button>
                 </div>
               </div>
 

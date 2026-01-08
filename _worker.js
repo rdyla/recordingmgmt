@@ -393,6 +393,98 @@ async function handleDeleteMeetingRecording(req, env) {
   });
 }
 
+/* --------------------- CONTACT CENTER RECORDINGS -------------------- */
+
+async function handleGetContactCenterRecordings(req, env) {
+  const url = new URL(req.url);
+  const upstreamUrl = new URL(`${ZOOM_API_BASE}/contact_center/recordings`);
+
+  for (const [key, value] of url.searchParams.entries()) {
+    upstreamUrl.searchParams.set(key, value);
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  const upstreamRes = await fetch(upstreamUrl.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const text = await upstreamRes.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = { raw: text };
+  }
+
+  return new Response(JSON.stringify(body), {
+    status: upstreamRes.status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
+/* -------------------- DOWNLOAD PROXY FOR CONTACT CENTER RECORDINGS -------------------- */
+
+async function handleDownloadContactCenterRecording(req, env) {
+  const url = new URL(req.url);
+  const target = url.searchParams.get("url");
+  const filename = url.searchParams.get("filename") || "";
+
+  if (!target) return json(400, { error: "Missing 'url' query parameter" });
+
+  let zoomUrl;
+  try {
+    zoomUrl = new URL(target);
+  } catch {
+    return json(400, { error: "Invalid URL" });
+  }
+
+  // Allow Zoom API host only
+  if (!zoomUrl.hostname.endsWith("zoom.us")) {
+    return json(400, { error: "Blocked URL" });
+  }
+
+  // Lock down allowed CC download paths
+  const p = zoomUrl.pathname || "";
+  const okPath =
+    p.startsWith("/v2/contact_center/recording/download/") ||
+    p.startsWith("/v2/contact_center/recording/transcripts/download/");
+
+  if (!okPath) {
+    return json(400, { error: "Blocked path" });
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  const zoomRes = await fetch(zoomUrl.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const ct = zoomRes.headers.get("content-type");
+  const cd = zoomRes.headers.get("content-disposition");
+
+  const headers = new Headers();
+  if (ct) headers.set("Content-Type", ct);
+
+  if (cd && /filename=/i.test(cd)) {
+    headers.set("Content-Disposition", cd);
+  } else if (filename) {
+    headers.set("Content-Disposition", `attachment; filename="${filename}"`);
+  } else {
+    headers.set("Content-Disposition", "attachment");
+  }
+
+  headers.set("Cache-Control", "private, max-age=0, no-store");
+
+  return new Response(zoomRes.body, {
+    status: zoomRes.status,
+    headers,
+  });
+}
+
 /* -------------------- MEETING RECORDINGS (USER-AGGREGATED, SEARCHABLE) -------------------- */
 
 async function handleGetMeetingRecordings(req, env) {
@@ -909,6 +1001,17 @@ export default {
     // Meeting recordings (aggregated)
     if (url.pathname === "/api/meeting/recordings" && req.method === "GET") {
       return handleGetMeetingRecordings(req, env);
+    }
+
+    // Contact Center recordings list
+
+    if (url.pathname === "/api/contact_center/recordings" && req.method === "GET") {
+        return handleGetContactCenterRecordings(req, env);
+    }
+
+    // CC recordings download proxy
+    if (url.pathname === "/api/contact_center/recordings/download" && req.method === "GET") {
+      return handleDownloadContactCenterRecording(req, env);
     }
 
     // Delete a single meeting recording file

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type {
   ApiResponse,
   MeetingApiResponse,
+  ContactCenterApiResponse,   // NEW
   Recording,
   SourceFilter,
 } from "../types";
@@ -75,6 +76,9 @@ const useRecordings = (
     },
     [from, to, zoomPageSize]
   );
+
+  
+
 
   const fetchAllMeetingRecordings = useCallback(
     async () => {
@@ -198,6 +202,139 @@ const useRecordings = (
     },
     [from, to, zoomPageSize]
   );
+
+const MAX_CC_PAGES = 50; // safety cap (adjust if you want)
+
+const useRecordings = (from: string, to: string, pageSize: number, source: SourceFilter, demoMode: boolean) => {
+  // ...
+
+  const fetchAllContactCenterRecordings = useCallback(async () => {
+    const allRecs: Recording[] = [];
+    let nextToken: string | null = null;
+    let loops = 0;
+
+    let apiFrom: string | undefined;
+    let apiTo: string | undefined;
+
+    do {
+      const params = new URLSearchParams();
+      params.set("from", from);
+      params.set("to", to);
+      params.set("page_size", String(zoomPageSize));
+      if (nextToken) params.set("next_page_token", nextToken);
+
+      const apiPage = await fetchJson<ContactCenterApiResponse>(
+        `/api/contact_center/recordings?${params.toString()}`
+      );
+
+      apiFrom = apiFrom ?? apiPage.from ?? from;
+      apiTo = apiPage.to ?? apiTo ?? to;
+
+      const recs: Recording[] = (apiPage.recordings ?? []).map((r) => {
+        const firstConsumer = (r.consumers && r.consumers[0]) || undefined;
+
+        // caller = consumers[0]
+        const callerName = firstConsumer?.consumer_name || "";
+        const callerNum = firstConsumer?.consumer_number || "";
+
+        // agent = display_name / user_email
+        const agentName = r.display_name || "";
+        const agentEmail = r.user_email || "";
+
+        const start = r.recording_start_time || "";
+        const end = r.recording_end_time || "";
+
+        return {
+          id: r.recording_id, // app-wide unique id
+          source: "cc",
+
+          // use existing columns in your table UX:
+          date_time: start || end || new Date().toISOString(),
+          end_time: end || undefined,
+          duration: r.recording_duration ?? 0,
+
+          // show caller in Primary, agent in Owner/Host (like you requested)
+          caller_name: callerName || undefined,
+          caller_number: callerNum || undefined,
+          callee_name: agentName || agentEmail || undefined,
+
+          direction: r.direction || "cc",
+          recording_type: r.recording_type || "Contact Center",
+
+          owner: {
+            type: r.owner_type || "queue",
+            id: r.owner_id || r.cc_queue_id || "",
+            name: agentName || agentEmail || "Agent",
+          },
+
+          site: { id: r.cc_queue_id || "", name: r.queue_name || "CC" },
+
+          // CC-specific convenience fields
+          cc_recording_id: r.recording_id,
+          cc_download_url: r.download_url,
+          cc_transcript_url: r.transcript_url,
+          cc_playback_url: r.playback_url,
+          cc_queue_name: r.queue_name,
+          cc_flow_name: r.flow_name,
+          cc_channel: r.channel,
+          cc_direction: r.direction,
+          cc_consumer_name: callerName || undefined,
+          cc_consumer_number: callerNum || undefined,
+          cc_agent_name: agentName || undefined,
+          cc_agent_email: agentEmail || undefined,
+        } as Recording;
+      });
+
+      allRecs.push(...recs);
+      nextToken = apiPage.next_page_token ?? null;
+      loops += 1;
+    } while (nextToken && loops < MAX_CC_PAGES);
+
+    return { from: apiFrom ?? from, to: apiTo ?? to, recordings: allRecs };
+  }, [from, to, zoomPageSize]);
+
+  const fetchRecordings = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (demoMode) {
+        const recs = generateDemoRecordings(from, to);
+        setData({ from, to, total_records: recs.length, next_page_token: null, recordings: recs });
+        return;
+      }
+
+      if (source === "phone") {
+        const { from: apiFrom, to: apiTo, recordings } = await fetchAllPhoneRecordings();
+        setData({ from: apiFrom, to: apiTo, total_records: recordings.length, next_page_token: null, recordings });
+      } else if (source === "meetings") {
+        const { from: apiFrom, to: apiTo, recordings } = await fetchAllMeetingRecordings();
+        setData({ from: apiFrom, to: apiTo, total_records: recordings.length, next_page_token: null, recordings });
+      } else {
+        // NEW: Contact Center
+        const { from: apiFrom, to: apiTo, recordings } = await fetchAllContactCenterRecordings();
+        setData({ from: apiFrom, to: apiTo, total_records: recordings.length, next_page_token: null, recordings });
+      }
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    demoMode,
+    from,
+    to,
+    source,
+    fetchAllPhoneRecordings,
+    fetchAllMeetingRecordings,
+    fetchAllContactCenterRecordings,
+  ]);
+
+  // ...
+};
+
+
 
   const fetchRecordings = useCallback(
     async () => {

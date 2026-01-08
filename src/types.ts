@@ -15,8 +15,6 @@ export type MeetingIdentity = {
   source: string; // e.g. "account_recordings"
 };
 
-export type RecordingSource = "phone" | "meetings";
-
 export type MeetingRecordingFile = {
   id?: string;
   recording_start?: string;
@@ -49,6 +47,22 @@ export type Recording = {
   call_element_id?: string;
   end_time?: string;
   disclaimer_status?: number;
+ 
+  // CC extras
+  cc_recording_id?: string;
+  cc_download_url?: string;
+  cc_transcript_url?: string;
+  cc_playback_url?: string;
+  cc_queue_name?: string;
+  cc_flow_name?: string;
+  cc_channel?: string;
+  cc_direction?: string;
+
+  // “caller” + “agent”
+  cc_consumer_name?: string;
+  cc_consumer_number?: string;
+  cc_agent_name?: string;
+  cc_agent_email?: string;
 
   // size in bytes (phone: Zoom's; meetings: total of child files)
   file_size?: number;
@@ -69,6 +83,58 @@ export type Recording = {
   autoDelete?: boolean | null;
   autoDeleteDate?: string | null; // "YYYY-MM-DD"
 };
+
+// types.ts
+
+export type RecordingSource = "phone" | "meetings" | "cc";
+export type SourceFilter = "phone" | "meetings" | "cc";
+
+export type ContactCenterConsumer = {
+  consumer_name?: string;
+  consumer_number?: string;
+};
+
+export type ContactCenterRecordingItem = {
+  recording_id: string;
+  cc_queue_id?: string;
+  queue_name?: string;
+  recording_duration?: number;
+
+  download_url?: string;     // voice recording download
+  transcript_url?: string;   // transcript download
+  playback_url?: string;
+
+  recording_start_time?: string;
+  recording_end_time?: string;
+
+  user_id?: string;
+  display_name?: string; // agent name
+  user_email?: string;
+
+  recording_type?: string;
+  channel?: string;      // voice/chat/etc
+  direction?: string;
+
+  owner_id?: string;
+  owner_name?: string;   // queue name etc
+  owner_type?: string;   // queue
+  engagement_id?: string;
+
+  flow_name?: string;
+  flow_id?: string;
+
+  consumers?: ContactCenterConsumer[];
+};
+
+export type ContactCenterApiResponse = {
+  next_page_token?: string;
+  page_size?: number;
+  from?: string;
+  to?: string;
+  recordings?: ContactCenterRecordingItem[];
+};
+
+
 
 export type AnalyticsRow = {
   date?: string;
@@ -91,8 +157,6 @@ export type ApiResponse = {
   to?: string;
   recordings?: Recording[];
 };
-
-export type SourceFilter = "phone" | "meetings";
 
 export type MeetingItem = {
   uuid: string;
