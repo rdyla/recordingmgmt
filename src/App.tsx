@@ -395,56 +395,6 @@ const fetchMeetingAnalyticsSummary = useCallback(
     setPageIndex((idx) => (idx + 1 < totalPages ? idx + 1 : idx));
   };
 
-
-
-    // ---------------------- CC download queue items (old) ----------------------
-    const buildCcQueueItemsFromSelection = useCallback((): CCQueueItem[] => {
-    if (source !== "cc") return [];
-
-    const selected = filteredRecordings.filter((rec, idx) =>
-      selectedKeys.has(makeRecordKey(rec, idx))
-    );
-
-    const items: CCQueueItem[] = [];
-
-    for (const rec of selected) {
-      const rid = (rec.cc_recording_id || rec.id || "").trim();
-      if (!rid) continue;
-
-      const startIso = rec.date_time || rec.end_time || "";
-      const d = datePart(startIso);
-
-      const agent = safeFilePart(rec.cc_agent_name || rec.callee_name || rec.owner?.name || "agent");
-      const caller = safeFilePart(rec.cc_consumer_name || rec.caller_name || "caller");
-
-      // Recording
-      if (rec.cc_download_url) {
-        items.push({
-          key: `${rid}|recording`,
-          recordingId: rid,
-          kind: "recording",
-          url: rec.cc_download_url,
-          filename: `CC_${d}_${agent}_${caller}_${safeFilePart(rid, 24)}.mp4`,
-          status: "queued",
-        });
-      }
-
-      // Transcript
-      if (rec.cc_transcript_url) {
-        items.push({
-          key: `${rid}|transcript`,
-          recordingId: rid,
-          kind: "transcript",
-          url: rec.cc_transcript_url,
-          filename: `CC_${d}_${agent}_${caller}_${safeFilePart(rid, 24)}.vtt`,
-          status: "queued",
-        });
-      }
-    }
-
-    return items;
-  }, [filteredRecordings, makeRecordKey, selectedKeys, source]);
-
  // -------------------- Download queue builders (unified) --------------------
 
 const buildCcQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
