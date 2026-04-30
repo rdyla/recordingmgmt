@@ -393,6 +393,207 @@ async function handleDeleteMeetingRecording(req, env) {
   });
 }
 
+/* -------------------- PHONE VOICEMAILS -------------------- */
+
+async function handleGetVoicemails(req, env) {
+  const url = new URL(req.url);
+  const upstreamUrl = new URL(`${ZOOM_API_BASE}/phone/voice_mails`);
+
+  for (const [key, value] of url.searchParams.entries()) {
+    upstreamUrl.searchParams.set(key, value);
+  }
+
+  // Default to non-trashed unless caller explicitly asks otherwise
+  if (!upstreamUrl.searchParams.has("trashed")) {
+    upstreamUrl.searchParams.set("trashed", "false");
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  const upstreamRes = await fetch(upstreamUrl.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const text = await upstreamRes.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = { raw: text };
+  }
+
+  return new Response(JSON.stringify(body), {
+    status: upstreamRes.status,
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+  });
+}
+
+async function handleDownloadVoicemail(req, env) {
+  const url = new URL(req.url);
+  const target = url.searchParams.get("url");
+  const filename = url.searchParams.get("filename") || "";
+
+  if (!target) return json(400, { error: "Missing 'url' query parameter" });
+
+  let zoomUrl;
+  try {
+    zoomUrl = new URL(target);
+  } catch {
+    return json(400, { error: "Invalid URL" });
+  }
+
+  if (!zoomUrl.hostname.endsWith("zoom.us")) {
+    return json(400, { error: "Blocked URL" });
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  const zoomRes = await fetch(zoomUrl.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const ct = zoomRes.headers.get("content-type");
+  const cd = zoomRes.headers.get("content-disposition");
+
+  const headers = new Headers();
+  if (ct) headers.set("Content-Type", ct);
+
+  if (cd && /filename=/i.test(cd)) {
+    headers.set("Content-Disposition", cd);
+  } else if (filename) {
+    headers.set("Content-Disposition", `attachment; filename="${filename}"`);
+  } else {
+    headers.set("Content-Disposition", "attachment");
+  }
+
+  headers.set("Cache-Control", "private, max-age=0, no-store");
+
+  return new Response(zoomRes.body, {
+    status: zoomRes.status,
+    headers,
+  });
+}
+
+async function handleDeleteVoicemail(req, env) {
+  if (req.method !== "POST") {
+    return json(405, { error: "Method not allowed" });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const voicemailId = body?.voicemailId;
+  if (!voicemailId) {
+    return json(400, { error: "Missing voicemailId" });
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  const zoomUrl = `${ZOOM_API_BASE}/phone/voice_mails/${encodeURIComponent(voicemailId)}`;
+
+  const zoomRes = await fetch(zoomUrl, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const status = zoomRes.status;
+  const text = await zoomRes.text();
+
+  console.log("VOICEMAIL DELETE", {
+    zoomUrl,
+    status,
+    body: text.slice(0, 500),
+  });
+
+  if (text) {
+    try {
+      const z = JSON.parse(text);
+      if (z.code || z.message) {
+        return json(status === 200 ? 400 : status, {
+          error: true,
+          zoomStatus: status,
+          zoomCode: z.code,
+          zoomMessage: z.message,
+          raw: text,
+        });
+      }
+    } catch {
+      // non-JSON body
+    }
+  }
+
+  if (!zoomRes.ok && status !== 204) {
+    return json(status, {
+      error: true,
+      zoomStatus: status,
+      raw: text,
+    });
+  }
+
+  return json(200, {
+    ok: true,
+    zoomStatus: status,
+    raw: text || null,
+  });
+}
+
+async function handleUpdateVoicemailStatus(req, env) {
+  if (req.method !== "POST") {
+    return json(405, { error: "Method not allowed" });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const voicemailId = body?.voicemailId;
+  const next = String(body?.status || "").toLowerCase();
+
+  if (!voicemailId) return json(400, { error: "Missing voicemailId" });
+  if (next !== "read" && next !== "unread") {
+    return json(400, { error: "status must be 'read' or 'unread'" });
+  }
+
+  // Zoom expects title-case on this PATCH param
+  const readStatus = next === "read" ? "Read" : "Unread";
+
+  const token = await getZoomAccessToken(env);
+
+  const zoomUrl =
+    `${ZOOM_API_BASE}/phone/voice_mails/${encodeURIComponent(voicemailId)}` +
+    `?read_status=${readStatus}`;
+
+  const zoomRes = await fetch(zoomUrl, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const status = zoomRes.status;
+  const text = await zoomRes.text();
+
+  if (!zoomRes.ok && status !== 204) {
+    return json(status, {
+      error: true,
+      zoomStatus: status,
+      raw: text,
+    });
+  }
+
+  return json(200, {
+    ok: true,
+    zoomStatus: status,
+    voicemailId,
+    status: next,
+  });
+}
+
 /* --------------------- CONTACT CENTER RECORDINGS -------------------- */
 
 async function handleGetContactCenterRecordings(req, env) {
@@ -1020,6 +1221,20 @@ export default {
     }
     if (url.pathname === "/api/phone/recordings/delete" && req.method === "POST") {
       return handleDeletePhoneRecording(req, env);
+    }
+
+    // Phone voicemails
+    if (url.pathname === "/api/phone/voicemails" && req.method === "GET") {
+      return handleGetVoicemails(req, env);
+    }
+    if (url.pathname === "/api/phone/voicemails/download" && req.method === "GET") {
+      return handleDownloadVoicemail(req, env);
+    }
+    if (url.pathname === "/api/phone/voicemails/delete" && req.method === "POST") {
+      return handleDeleteVoicemail(req, env);
+    }
+    if (url.pathname === "/api/phone/voicemails/status" && req.method === "POST") {
+      return handleUpdateVoicemailStatus(req, env);
     }
 
     // Meetings

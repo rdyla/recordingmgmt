@@ -82,6 +82,9 @@ export type Recording = {
   // meeting-only: auto-delete flags
   autoDelete?: boolean | null;
   autoDeleteDate?: string | null; // "YYYY-MM-DD"
+
+  // voicemail-only
+  vm_status?: "read" | "unread";
 };
 
 export type QueueStatus = "queued" | "downloading" | "done" | "failed";
@@ -97,8 +100,8 @@ export type DownloadQueueItem = {
   error?: string;
 };
 
-export type RecordingSource = "phone" | "meetings" | "cc";
-export type SourceFilter = "phone" | "meetings" | "cc";
+export type RecordingSource = "phone" | "meetings" | "cc" | "voicemail";
+export type SourceFilter = "phone" | "meetings" | "cc" | "voicemail";
 
 export type ContactCenterConsumer = {
   consumer_name?: string;
@@ -197,4 +200,38 @@ export type MeetingApiResponse = {
 export type DeleteProgress = {
   total: number;
   done: number;
+};
+
+export type VoicemailItem = {
+  id: string;
+  call_id?: string;
+  call_log_id?: string;
+  call_history_id?: string;
+  call_element_id?: string;
+  caller_name?: string;
+  caller_number?: string;
+  caller_number_type?: number;
+  callee_name?: string;
+  callee_number?: string;
+  callee_number_type?: number;
+  date_time?: string;
+  download_url?: string;
+  duration?: number;
+  status?: "read" | "unread";
+  owner?: {
+    id?: string;
+    name?: string;
+    extension_number?: number;
+    type?: string;
+  };
+};
+
+export type VoicemailApiResponse = {
+  from?: string;
+  to?: string;
+  page_size?: number;
+  page_count?: number;
+  total_records?: number;
+  next_page_token?: string;
+  voice_mails?: VoicemailItem[];
 };

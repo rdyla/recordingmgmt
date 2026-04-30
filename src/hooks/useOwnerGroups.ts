@@ -39,7 +39,14 @@ const useOwnerGroups = (
         ? `${rec.owner.name} (${rec.owner.extension_number})`
         : rec.owner?.name || "Unknown";
 
-      const sourceLabel = isMeeting ? "Meeting" : "Phone";
+      const sourceLabel =
+        rec.source === "meetings"
+          ? "Meeting"
+          : rec.source === "cc"
+          ? "Contact Center"
+          : rec.source === "voicemail"
+          ? "Voicemail"
+          : "Phone";
       const siteLabel = isMeeting ? "—" : rec.site?.name || "—";
 
       const groupKey = `${sourceLabel}|${ownerLabel}`;

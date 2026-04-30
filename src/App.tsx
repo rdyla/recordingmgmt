@@ -166,6 +166,11 @@ const fetchMeetingAnalyticsSummary = useCallback(
     "all" | "auto" | "manual"
   >("all");
 
+  // read/unread filter (voicemail only)
+  const [vmStatusFilter, setVmStatusFilter] = useState<
+    "all" | "read" | "unread"
+  >("all");
+
   // modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Recording[]>([]);
@@ -196,6 +201,9 @@ const fetchMeetingAnalyticsSummary = useCallback(
       }
       if (rec.source === "cc") {
         return `c|${rec.id ?? idx}`;
+      }
+      if (rec.source === "voicemail") {
+        return `v|${rec.id ?? idx}`;
       }
       return `p|${rec.id ?? idx}`;
     }, []);
@@ -241,8 +249,13 @@ const fetchMeetingAnalyticsSummary = useCallback(
           if (autoDeleteFilter === "manual") return val === false;
 
           return true;
+        })
+        .filter((rec) => {
+          if (source !== "voicemail") return true;
+          if (vmStatusFilter === "all") return true;
+          return rec.vm_status === vmStatusFilter;
         }),
-    [matchesQuery, recordings, source, autoDeleteFilter]
+    [matchesQuery, recordings, source, autoDeleteFilter, vmStatusFilter]
   );
 
   const effectivePageSize = pageSize || 100;
@@ -522,16 +535,52 @@ const buildMeetingsQueueItemsFromSelection = useCallback((): DownloadQueueItem[]
   return items;
 }, [source, filteredRecordings, selectedKeys, makeRecordKey]);
 
+const buildVoicemailQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
+  if (source !== "voicemail") return [];
+
+  const selected = filteredRecordings.filter((rec, idx) =>
+    selectedKeys.has(makeRecordKey(rec, idx))
+  );
+
+  const items: DownloadQueueItem[] = [];
+
+  for (const rec of selected) {
+    const url = rec.download_url;
+    if (!url) continue;
+
+    const d = datePart(rec.date_time);
+    const caller = safeFilePart(rec.caller_name || rec.caller_number || "caller");
+    const callee = safeFilePart(
+      rec.callee_name || rec.callee_number || rec.owner?.name || "callee"
+    );
+    const rid = safeFilePart(rec.id, 24);
+
+    items.push({
+      key: `vm|${rec.id}|recording`,
+      source: "voicemail",
+      kind: "recording",
+      url,
+      filename: `VM_${d}_${caller}_${callee}_${rid}.mp3`,
+      status: "queued",
+      attempts: 0,
+    });
+  }
+
+  return items;
+}, [source, filteredRecordings, selectedKeys, makeRecordKey]);
+
 const buildQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
   if (source === "cc") return buildCcQueueItemsFromSelection();
   if (source === "phone") return buildPhoneQueueItemsFromSelection();
   if (source === "meetings") return buildMeetingsQueueItemsFromSelection();
+  if (source === "voicemail") return buildVoicemailQueueItemsFromSelection();
   return [];
 }, [
   source,
   buildCcQueueItemsFromSelection,
   buildPhoneQueueItemsFromSelection,
   buildMeetingsQueueItemsFromSelection,
+  buildVoicemailQueueItemsFromSelection,
 ]);
 
 const addSelectedToQueue = useCallback(() => {
@@ -574,6 +623,8 @@ const downloadQueueItem = useCallback(async (item: DownloadQueueItem) => {
       ? "/api/contact_center/recordings/download"
       : item.source === "phone"
       ? "/api/phone/recordings/download"
+      : item.source === "voicemail"
+      ? "/api/phone/voicemails/download"
       : "/api/meeting/recordings/download";
 
   const href =
@@ -704,6 +755,51 @@ const clearAllDlQueue = useCallback(() => {
   setDlQueueRunning(false);
 }, []);
 
+  const handleToggleVoicemailStatus = useCallback(
+    async (rec: Recording) => {
+      const next: "read" | "unread" =
+        rec.vm_status === "read" ? "unread" : "read";
+
+      if (demoMode) {
+        setData((prev) => {
+          if (!prev || !prev.recordings) return prev;
+          const updated = prev.recordings.map((r) =>
+            r === rec ? { ...r, vm_status: next } : r
+          );
+          return { ...prev, recordings: updated };
+        });
+        return;
+      }
+
+      if (!rec.id) return;
+
+      try {
+        const res = await fetch("/api/phone/voicemails/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voicemailId: rec.id, status: next }),
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          console.error("Voicemail status update failed", res.status, txt);
+          return;
+        }
+        setData((prev) => {
+          if (!prev || !prev.recordings) return prev;
+          const updated = prev.recordings.map((r) =>
+            r.id === rec.id && r.source === "voicemail"
+              ? { ...r, vm_status: next }
+              : r
+          );
+          return { ...prev, recordings: updated };
+        });
+      } catch (err) {
+        console.error("Voicemail status update error", err);
+      }
+    },
+    [demoMode, setData]
+  );
+
   // open the modal with current selection
   const openDeleteModal = () => {
     const toDelete = filteredRecordings.filter((rec, idx) =>
@@ -757,6 +853,22 @@ const clearAllDlQueue = useCallback(() => {
                 console.error("Phone delete failed", res.status, txt);
                 throw new Error(
                   `Phone delete failed: ${res.status} ${txt || ""}`.trim()
+                );
+              }
+            } else if (rec.source === "voicemail") {
+              if (!rec.id) {
+                throw new Error("Missing voicemail id");
+              }
+              const res = await fetch("/api/phone/voicemails/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ voicemailId: rec.id }),
+              });
+              if (!res.ok) {
+                const txt = await res.text();
+                console.error("Voicemail delete failed", res.status, txt);
+                throw new Error(
+                  `Voicemail delete failed: ${res.status} ${txt || ""}`.trim()
                 );
               }
             } else {
@@ -873,6 +985,7 @@ const clearAllDlQueue = useCallback(() => {
                       setPageIndex(0);
                       clearSelection();
                       setAutoDeleteFilter("all");
+                      setVmStatusFilter("all");
                     }}
                   >
                     Phone
@@ -887,6 +1000,7 @@ const clearAllDlQueue = useCallback(() => {
                       setSource("meetings");
                       setPageIndex(0);
                       clearSelection();
+                      setVmStatusFilter("all");
                     }}
                   >
                     Meetings
@@ -901,9 +1015,25 @@ const clearAllDlQueue = useCallback(() => {
                       setPageIndex(0);
                       clearSelection();
                       setAutoDeleteFilter("all"); // irrelevant for cc but harmless
+                      setVmStatusFilter("all");
                     }}
                   >
                     Contact Center
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      "toggle-pill" +
+                      (source === "voicemail" ? " toggle-pill-active" : "")
+                    }
+                    onClick={() => {
+                      setSource("voicemail");
+                      setPageIndex(0);
+                      clearSelection();
+                      setAutoDeleteFilter("all");
+                    }}
+                  >
+                    Voicemail
                   </button>
                 </div>
               </div>
@@ -946,6 +1076,46 @@ const clearAllDlQueue = useCallback(() => {
                     disabled={source !== "meetings"}
                   >
                     Off
+                  </button>
+                </div>
+              </div>
+
+              {/* VM status (voicemail only) */}
+              <div className="filter-group">
+                <label className="filter-label">VM status</label>
+                <div className="toggle-pill-group">
+                  <button
+                    type="button"
+                    className={
+                      "toggle-pill" +
+                      (vmStatusFilter === "all" ? " toggle-pill-active" : "")
+                    }
+                    onClick={() => setVmStatusFilter("all")}
+                    disabled={source !== "voicemail"}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      "toggle-pill" +
+                      (vmStatusFilter === "unread" ? " toggle-pill-active" : "")
+                    }
+                    onClick={() => setVmStatusFilter("unread")}
+                    disabled={source !== "voicemail"}
+                  >
+                    Unread
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      "toggle-pill" +
+                      (vmStatusFilter === "read" ? " toggle-pill-active" : "")
+                    }
+                    onClick={() => setVmStatusFilter("read")}
+                    disabled={source !== "voicemail"}
+                  >
+                    Read
                   </button>
                 </div>
               </div>
@@ -1129,6 +1299,7 @@ const clearAllDlQueue = useCallback(() => {
                   allOnPageSelected={allOnPageSelected}
                   demoMode={demoMode}
                   analyticsByMeetingId={analyticsByMeetingId}
+                  onToggleVoicemailStatus={handleToggleVoicemailStatus}
                 />
             )}
 

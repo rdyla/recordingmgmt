@@ -25,7 +25,7 @@ const AppHeader: React.FC<Props> = ({
       <div className="app-header-inner">
         <h1 className="app-title">Zoom Recording Explorer</h1>
         <p className="app-subtitle">
-        Source: { source === "phone" ? "Phone" : source === "meetings" ? "Meetings" : "Contact Center" } · { dataFrom ?? from } → { dataTo ?? to }
+        Source: { source === "phone" ? "Phone" : source === "meetings" ? "Meetings" : source === "voicemail" ? "Voicemail" : "Contact Center" } · { dataFrom ?? from } → { dataTo ?? to }
           {meetingIdentity && source === "meetings" && (
             <>
               {" "}

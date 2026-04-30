@@ -5,6 +5,7 @@ import type {
   ContactCenterApiResponse,
   Recording,
   SourceFilter,
+  VoicemailApiResponse,
 } from "../types";
 import { generateDemoRecordings } from "../utils/demoRecordings";
 
@@ -19,6 +20,7 @@ const fetchJson = async <T,>(url: string) => {
 
 const MAX_PHONE_PAGES = 20; // safety cap
 const MAX_CC_PAGES = 50; // safety cap
+const MAX_VM_PAGES = 50; // safety cap
 
 const useRecordings = (
   from: string,
@@ -239,6 +241,75 @@ const useRecordings = (
     return { from: apiFrom ?? from, to: apiTo ?? to, recordings: allRecs };
   }, [from, to, zoomPageSize]);
 
+  // ---------------- PHONE VOICEMAILS (paged) ----------------
+  const fetchAllVoicemails = useCallback(async () => {
+    const allRecs: Recording[] = [];
+    let nextToken: string | null = null;
+    let loops = 0;
+
+    let apiFrom: string | undefined;
+    let apiTo: string | undefined;
+
+    do {
+      const params = new URLSearchParams();
+      params.set("from", from);
+      params.set("to", to);
+      params.set("page_size", String(zoomPageSize));
+      if (nextToken) params.set("next_page_token", nextToken);
+
+      const apiPage = await fetchJson<VoicemailApiResponse>(
+        `/api/phone/voicemails?${params.toString()}`
+      );
+
+      apiFrom = apiFrom ?? apiPage.from ?? from;
+      apiTo = apiPage.to ?? apiTo ?? to;
+
+      const recs: Recording[] = (apiPage.voice_mails ?? []).map((v) => {
+        const ownerName = v.owner?.name || "Unknown";
+        return {
+          id: v.id,
+          source: "voicemail" as const,
+
+          caller_name: v.caller_name,
+          caller_number: v.caller_number || "",
+          caller_number_type: v.caller_number_type ?? 0,
+          callee_name: v.callee_name,
+          callee_number: v.callee_number || "",
+          callee_number_type: v.callee_number_type ?? 0,
+
+          direction: "inbound",
+          duration: v.duration ?? 0,
+          download_url: v.download_url,
+          date_time: v.date_time || new Date().toISOString(),
+
+          recording_type: "Voicemail",
+
+          call_id: v.call_id,
+          call_log_id: v.call_log_id,
+          call_history_id: v.call_history_id,
+          call_element_id: v.call_element_id,
+
+          owner: v.owner
+            ? {
+                type: v.owner.type || "user",
+                id: v.owner.id || "",
+                name: ownerName,
+                extension_number: v.owner.extension_number,
+              }
+            : undefined,
+
+          vm_status: v.status,
+        } as Recording;
+      });
+
+      allRecs.push(...recs);
+      nextToken = apiPage.next_page_token ?? null;
+      loops += 1;
+    } while (nextToken && loops < MAX_VM_PAGES);
+
+    return { from: apiFrom ?? from, to: apiTo ?? to, recordings: allRecs };
+  }, [from, to, zoomPageSize]);
+
   // ---------------- MAIN FETCH ----------------
   const fetchRecordings = useCallback(async () => {
     setLoading(true);
@@ -281,9 +352,21 @@ const useRecordings = (
         return;
       }
 
-      // NEW: contact center
-      const { from: apiFrom, to: apiTo, recordings } =
-        await fetchAllContactCenterRecordings();
+      if (source === "cc") {
+        const { from: apiFrom, to: apiTo, recordings } =
+          await fetchAllContactCenterRecordings();
+        setData({
+          from: apiFrom,
+          to: apiTo,
+          total_records: recordings.length,
+          next_page_token: null,
+          recordings,
+        });
+        return;
+      }
+
+      // voicemail
+      const { from: apiFrom, to: apiTo, recordings } = await fetchAllVoicemails();
       setData({
         from: apiFrom,
         to: apiTo,
@@ -305,6 +388,7 @@ const useRecordings = (
     fetchAllPhoneRecordings,
     fetchAllMeetingRecordings,
     fetchAllContactCenterRecordings,
+    fetchAllVoicemails,
   ]);
 
   const handleSearch = useCallback(() => {

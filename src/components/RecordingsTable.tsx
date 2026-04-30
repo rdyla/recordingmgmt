@@ -18,6 +18,9 @@ export type RecordingsTableProps = {
 
   // NEW (optional): meeting analytics map
   analyticsByMeetingId?: Record<string, MeetingAnalyticsStats | undefined>;
+
+  // NEW (optional): toggle voicemail read/unread
+  onToggleVoicemailStatus?: (rec: Recording) => void;
 };
 
 const DownloadIcon: React.FC = () => (
@@ -48,6 +51,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
   allOnPageSelected,
   demoMode,
   analyticsByMeetingId,
+  onToggleVoicemailStatus,
 }) => {
   // one open menu at a time (by row key)
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
@@ -93,6 +97,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
             <th>Last access</th>
 
             <th>Auto-delete date</th>
+            <th>Status</th>
           </tr>
         </thead>
 
@@ -119,7 +124,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                       }
                     />
                   </td>
-                  <td colSpan={9}>
+                  <td colSpan={10}>
                     <button
                       type="button"
                       className="group-toggle"
@@ -143,6 +148,7 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
 
   const isMeeting = rec.source === "meetings";
   const isCC = rec.source === "cc";
+  const isVM = rec.source === "voicemail";
 
   const dt = rec.date_time
     ? new Date(rec.date_time)
@@ -359,6 +365,25 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
     ) : (
       "—"
     );
+  } else if (isVM) {
+    if (rec.download_url && !demoMode) {
+      const safeCaller = (rec.caller_name || rec.caller_number || "caller")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "_")
+        .slice(0, 24);
+      const datePart = rec.date_time
+        ? new Date(rec.date_time).toISOString().slice(0, 10)
+        : "vm";
+      const filename = `vm_${datePart}_${safeCaller}_${rec.id}.mp3`;
+      const href = `/api/phone/voicemails/download?url=${encodeURIComponent(
+        rec.download_url
+      )}&filename=${encodeURIComponent(filename)}`;
+      filesCell = (
+        <a href={href} className="text-sky-400 hover:underline">
+          Voicemail
+        </a>
+      );
+    }
   } else {
     // phone
     if (rec.download_url && !demoMode) {
@@ -397,6 +422,44 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
       <td>{isMeeting ? (lastAccessDate || "—") : ""}</td>
 
       <td>{isMeeting && autoDeleteDate ? autoDeleteDate : ""}</td>
+      <td>
+        {isVM ? (
+          <div className="flex items-center gap-2">
+            <span
+              style={{
+                fontWeight: rec.vm_status === "unread" ? 700 : 400,
+                opacity: rec.vm_status === "unread" ? 1 : 0.7,
+              }}
+            >
+              {rec.vm_status === "unread"
+                ? "Unread"
+                : rec.vm_status === "read"
+                ? "Read"
+                : "—"}
+            </span>
+            {onToggleVoicemailStatus && rec.vm_status && (
+              <button
+                type="button"
+                className="pager-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleVoicemailStatus(rec);
+                }}
+                title={
+                  rec.vm_status === "read"
+                    ? "Mark as unread"
+                    : "Mark as read"
+                }
+                style={{ padding: "2px 8px", fontSize: 12 }}
+              >
+                {rec.vm_status === "read" ? "Mark unread" : "Mark read"}
+              </button>
+            )}
+          </div>
+        ) : (
+          ""
+        )}
+      </td>
     </tr>
   );
 })
