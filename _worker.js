@@ -19,6 +19,135 @@ const ZOOM_OAUTH_TOKEN_URL = "https://zoom.us/oauth/token";
 const tokenCacheByTenant = new Map();        // slug -> { token, exp }
 const hostCacheByTenant = new Map();         // slug -> Map<hostId, { name, email }>
 
+/* -------------------- CF ACCESS JWT VERIFICATION --------------------
+ *
+ * When env.CF_ACCESS_TEAM_DOMAIN and env.CF_ACCESS_AUD are both set, every
+ * request must carry a valid `Cf-Access-Jwt-Assertion` header signed by
+ * Cloudflare Access. We cryptographically verify the JWT and pull the email
+ * from the verified claims instead of trusting the email header.
+ *
+ * If either env is missing we fall back to trusting the email header — useful
+ * for local dev or before strict mode is rolled on.
+ */
+
+const jwksCache = { keys: null, exp: 0 };
+
+async function getJwks(teamDomain) {
+  const now = Date.now();
+  if (jwksCache.keys && now < jwksCache.exp) return jwksCache.keys;
+
+  const res = await fetch(`https://${teamDomain}/cdn-cgi/access/certs`);
+  if (!res.ok) throw new Error(`Failed to fetch Access JWKS: ${res.status}`);
+
+  const data = await res.json();
+  jwksCache.keys = Array.isArray(data.keys) ? data.keys : [];
+  jwksCache.exp = now + 60 * 60 * 1000; // 1 hour
+  return jwksCache.keys;
+}
+
+function b64urlToBytes(s) {
+  s = String(s).replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function b64urlToString(s) {
+  return new TextDecoder().decode(b64urlToBytes(s));
+}
+
+async function verifyAccessJwt(req, env) {
+  const teamDomain = env.CF_ACCESS_TEAM_DOMAIN;
+  const expectedAud = env.CF_ACCESS_AUD;
+
+  if (!teamDomain || !expectedAud) {
+    return { configured: false };
+  }
+
+  const token = req.headers.get("cf-access-jwt-assertion");
+  if (!token) return { configured: true, error: "Missing CF Access JWT" };
+
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return { configured: true, error: "Malformed JWT" };
+  }
+  const [headerB64, payloadB64, sigB64] = parts;
+
+  let header, payload;
+  try {
+    header = JSON.parse(b64urlToString(headerB64));
+    payload = JSON.parse(b64urlToString(payloadB64));
+  } catch {
+    return { configured: true, error: "Invalid JWT encoding" };
+  }
+
+  if (header.alg !== "RS256") {
+    return { configured: true, error: `Unsupported JWT alg ${header.alg}` };
+  }
+
+  let jwks;
+  try {
+    jwks = await getJwks(teamDomain);
+  } catch (e) {
+    return { configured: true, error: `JWKS fetch failed: ${e?.message || e}` };
+  }
+
+  const jwk = jwks.find((k) => k.kid === header.kid);
+  if (!jwk) return { configured: true, error: "JWT kid not found in JWKS" };
+
+  let cryptoKey;
+  try {
+    cryptoKey = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+  } catch (e) {
+    return { configured: true, error: `Key import failed: ${e?.message || e}` };
+  }
+
+  const sig = b64urlToBytes(sigB64);
+  const data = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+
+  const ok = await crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    sig,
+    data
+  );
+  if (!ok) return { configured: true, error: "Invalid JWT signature" };
+
+  // Verify audience
+  const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  if (!aud.includes(expectedAud)) {
+    return { configured: true, error: "JWT aud mismatch" };
+  }
+
+  // Verify expiration
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp === "number" && payload.exp < nowSec) {
+    return { configured: true, error: "JWT expired" };
+  }
+  if (typeof payload.nbf === "number" && payload.nbf > nowSec + 30) {
+    return { configured: true, error: "JWT not yet valid" };
+  }
+
+  // Verify issuer matches the team domain (defence in depth)
+  const expectedIssuer = `https://${teamDomain}`;
+  if (payload.iss && payload.iss !== expectedIssuer) {
+    return { configured: true, error: "JWT iss mismatch" };
+  }
+
+  const email = String(payload.email || "").toLowerCase();
+  if (!email) return { configured: true, error: "JWT missing email claim" };
+
+  return { configured: true, email };
+}
+
 function parseTenants(env) {
   try {
     const arr = JSON.parse(env.TENANTS_JSON || "[]");
@@ -48,12 +177,22 @@ function readCookie(req, name) {
 }
 
 async function resolveTenant(req, env) {
+  // Prefer cryptographically-verified JWT email when CF Access is configured
+  // for strict mode; otherwise fall back to the header that CF Access also
+  // injects (trusted only because Access is in front of the worker).
+  const verified = await verifyAccessJwt(req, env);
+  if (verified.configured && verified.error) {
+    return { error: 401, message: `CF Access JWT: ${verified.error}` };
+  }
+
   const email = (
-    req.headers.get("cf-access-authenticated-user-email") || ""
+    verified.email ||
+    req.headers.get("cf-access-authenticated-user-email") ||
+    ""
   ).toLowerCase();
 
   if (!email) {
-    return { error: 401, message: "Missing CF Access email header" };
+    return { error: 401, message: "Missing CF Access email" };
   }
 
   const tenants = parseTenants(env);

@@ -24,8 +24,15 @@ directory = "./dist"
 # tenant via the header dropdown (sets an active_tenant cookie).
 # -----------------------------------------------------------------------------
 
+# CF Access strict mode: when both CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD are
+# set, the worker cryptographically verifies the Cf-Access-Jwt-Assertion header
+# instead of trusting the email header. Find the AUD on the Access app's
+# overview page in Zero Trust dashboard. Leave both blank to keep the legacy
+# header-trust behavior (only safe if Access is unconditionally in front).
 [vars]
 SUPER_ADMINS = "rdyla@packetfusion.com"
+CF_ACCESS_TEAM_DOMAIN = ""
+CF_ACCESS_AUD = ""
 TENANTS_JSON = '''
 [
   {
