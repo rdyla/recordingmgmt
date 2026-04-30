@@ -31,17 +31,17 @@ TENANTS_JSON = '''
   {
     "slug": "packetfusion",
     "displayName": "Packet Fusion (test)",
-    "accountId": "REPLACE_WITH_PACKETFUSION_ZOOM_ACCOUNT_ID",
-    "clientId": "REPLACE_WITH_PACKETFUSION_ZOOM_CLIENT_ID",
+    "accountId": "EBOAoB2WQ4WnFIT5ZKzmdw",
+    "clientId": "lONO2jrBQsGSHpT8R9dhWg",
     "domains": ["packetfusion.com"],
     "isProduction": false
   },
   {
     "slug": "concordia",
     "displayName": "Concordia University",
-    "accountId": "REPLACE_WITH_CONCORDIA_ZOOM_ACCOUNT_ID",
-    "clientId": "REPLACE_WITH_CONCORDIA_ZOOM_CLIENT_ID",
-    "domains": ["concordia.edu"],
+    "accountId": "E5oJB6VgRbG7SCBkjYdcDQ",
+    "clientId": "289_wbxMR1SDeIciqaNrgw",
+    "domains": ["cui.edu"],
     "isProduction": true
   }
 ]
