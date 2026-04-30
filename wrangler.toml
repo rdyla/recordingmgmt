@@ -5,3 +5,44 @@ account_id = "521c322a89a17bb69f91f1e65177606e"
 
 [assets]
 directory = "./dist"
+
+# -----------------------------------------------------------------------------
+# Tenancy
+# -----------------------------------------------------------------------------
+# Each tenant has:
+#   - public config in TENANTS_JSON below (slug, displayName, accountId, clientId,
+#     domains, isProduction)
+#   - a per-tenant Zoom client secret stored as a wrangler secret named
+#     ZOOM_CLIENT_SECRET_<SLUG_UPPER>  e.g. ZOOM_CLIENT_SECRET_PACKETFUSION
+#     Set with:  npx wrangler secret put ZOOM_CLIENT_SECRET_PACKETFUSION
+#
+# `domains` is the email-domain allowlist for that tenant (CF Access already
+# authenticated the user; we map their email's domain to a tenant here).
+# `isProduction: true` triggers extra delete-friction in the UI.
+#
+# SUPER_ADMINS is a comma-separated list of emails that can switch into any
+# tenant via the header dropdown (sets an active_tenant cookie).
+# -----------------------------------------------------------------------------
+
+[vars]
+SUPER_ADMINS = "rdyla@packetfusion.com"
+TENANTS_JSON = '''
+[
+  {
+    "slug": "packetfusion",
+    "displayName": "Packet Fusion (test)",
+    "accountId": "REPLACE_WITH_PACKETFUSION_ZOOM_ACCOUNT_ID",
+    "clientId": "REPLACE_WITH_PACKETFUSION_ZOOM_CLIENT_ID",
+    "domains": ["packetfusion.com"],
+    "isProduction": false
+  },
+  {
+    "slug": "concordia",
+    "displayName": "Concordia University",
+    "accountId": "REPLACE_WITH_CONCORDIA_ZOOM_ACCOUNT_ID",
+    "clientId": "REPLACE_WITH_CONCORDIA_ZOOM_CLIENT_ID",
+    "domains": ["concordia.edu"],
+    "isProduction": true
+  }
+]
+'''

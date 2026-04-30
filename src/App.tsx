@@ -6,6 +6,7 @@ import React, {
 } from "react";
 import AppHeader from "./components/AppHeader";
 import RecordingsTable from "./components/RecordingsTable";
+import useMe from "./hooks/useMe";
 import useOwnerGroups, { type PageRecord } from "./hooks/useOwnerGroups";
 import useRecordings from "./hooks/useRecordings";
 import useSelection from "./hooks/useSelection";
@@ -174,6 +175,14 @@ const fetchMeetingAnalyticsSummary = useCallback(
   // modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Recording[]>([]);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+
+  // tenant identity / switcher
+  const { me, switchTenant } = useMe();
+  const [switching, setSwitching] = useState(false);
+
+  const activeTenant = me?.activeTenant ?? null;
+  const isProductionTenant = !!activeTenant?.isProduction;
 
   const {
     data,
@@ -807,6 +816,7 @@ const clearAllDlQueue = useCallback(() => {
     );
     if (!toDelete.length) return;
     setPendingDelete(toDelete);
+    setDeleteConfirmText("");
     setShowDeleteModal(true);
   };
 
@@ -814,7 +824,26 @@ const clearAllDlQueue = useCallback(() => {
     if (deleting) return;
     setShowDeleteModal(false);
     setPendingDelete([]);
+    setDeleteConfirmText("");
   };
+
+  const handleSwitchTenant = useCallback(
+    async (slug: string) => {
+      if (slug === activeTenant?.slug) return;
+      setSwitching(true);
+      try {
+        await switchTenant(slug);
+        clearSelection();
+        setPageIndex(0);
+        await fetchRecordings();
+      } catch (err) {
+        console.error("Tenant switch failed", err);
+      } finally {
+        setSwitching(false);
+      }
+    },
+    [activeTenant?.slug, clearSelection, fetchRecordings, switchTenant]
+  );
 
   const handleConfirmDelete = async () => {
     const toDelete = pendingDelete;
@@ -943,6 +972,9 @@ const clearAllDlQueue = useCallback(() => {
         dataTo={data?.to}
         demoMode={demoMode}
         meetingIdentity={meetingIdentity}
+        me={me}
+        onSwitchTenant={handleSwitchTenant}
+        switching={switching}
       />
 
       <main className="app-main">
@@ -1436,9 +1468,49 @@ const clearAllDlQueue = useCallback(() => {
               <p className="modal-subtitle">
                 You are about to delete{" "}
                 <strong>{pendingDelete.length}</strong> recording
-                {pendingDelete.length !== 1 ? "s" : ""}. This will move them to
-                the Zoom trash (or remove them in demo mode).
+                {pendingDelete.length !== 1 ? "s" : ""} from{" "}
+                <strong>
+                  {activeTenant?.displayName || "the active tenant"}
+                </strong>
+                . This will move them to the Zoom trash (or remove them in demo
+                mode).
               </p>
+
+              {isProductionTenant && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: 10,
+                    background: "#7f1d1d",
+                    color: "#fecaca",
+                    border: "1px solid #dc2626",
+                    borderRadius: 6,
+                    fontSize: 13,
+                  }}
+                >
+                  <strong>Production tenant.</strong> Type{" "}
+                  <code
+                    style={{
+                      background: "rgba(0,0,0,0.35)",
+                      padding: "0 6px",
+                      borderRadius: 3,
+                    }}
+                  >
+                    {activeTenant?.slug}
+                  </code>{" "}
+                  below to confirm.
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder={activeTenant?.slug || ""}
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    disabled={deleting}
+                    style={{ marginTop: 8 }}
+                    autoFocus
+                  />
+                </div>
+              )}
 
               <div className="modal-body">
                 <div className="modal-list">
@@ -1476,7 +1548,11 @@ const clearAllDlQueue = useCallback(() => {
                   type="button"
                   className="btn-danger"
                   onClick={handleConfirmDelete}
-                  disabled={deleting}
+                  disabled={
+                    deleting ||
+                    (isProductionTenant &&
+                      deleteConfirmText.trim() !== (activeTenant?.slug ?? ""))
+                  }
                 >
                   {deleting ? "Deleting…" : "Confirm delete"}
                 </button>

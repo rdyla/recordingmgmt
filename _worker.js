@@ -1,31 +1,137 @@
-// _worker.js – Zoom Phone Recording Explorer backend (no user OAuth, supports phone + meeting recordings)
+// _worker.js – Zoom Phone Recording Explorer backend (multi-tenant; CF Access at edge)
 
 const ZOOM_API_BASE = "https://api.zoom.us/v2";
 const ZOOM_OAUTH_TOKEN_URL = "https://zoom.us/oauth/token";
 
-/**
- * Simple in-memory access token cache
+/* -------------------- TENANT RESOLUTION --------------------
+ *
+ * Tenancy model:
+ *   - Cloudflare Access is in front of the Worker. Every authenticated
+ *     request carries the user's email in `Cf-Access-Authenticated-User-Email`.
+ *   - `env.TENANTS_JSON` is a JSON string array of tenant configs:
+ *       [{slug, displayName, accountId, clientId, domains:[], isProduction}]
+ *   - The per-tenant Zoom client secret lives in a wrangler secret named
+ *     `ZOOM_CLIENT_SECRET_<SLUG_UPPER>` (looked up dynamically by slug).
+ *   - `env.SUPER_ADMINS` is a comma-separated list of emails that can switch
+ *     into any tenant via an `active_tenant` cookie / `?as=<slug>` query.
  */
-let cachedToken = null;
-let cachedTokenExp = 0;
 
-/* ---- Helpers ---- */
-// --- Host cache + helper lookups -----------------------------------------
-const hostCache = new Map();
+const tokenCacheByTenant = new Map();        // slug -> { token, exp }
+const hostCacheByTenant = new Map();         // slug -> Map<hostId, { name, email }>
 
-/**
- * Fetch basic info for a Zoom user by host_id and cache it.
- * Returns { name, email }.
- */
-async function getHostInfo(hostId, accessToken) {
+function parseTenants(env) {
+  try {
+    const arr = JSON.parse(env.TENANTS_JSON || "[]");
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseSuperAdmins(env) {
+  return String(env.SUPER_ADMINS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function readCookie(req, name) {
+  const cookie = req.headers.get("cookie") || "";
+  const parts = cookie.split(/;\s*/);
+  for (const p of parts) {
+    const eq = p.indexOf("=");
+    if (eq < 0) continue;
+    const k = p.slice(0, eq).trim();
+    if (k === name) return decodeURIComponent(p.slice(eq + 1));
+  }
+  return "";
+}
+
+async function resolveTenant(req, env) {
+  const email = (
+    req.headers.get("cf-access-authenticated-user-email") || ""
+  ).toLowerCase();
+
+  if (!email) {
+    return { error: 401, message: "Missing CF Access email header" };
+  }
+
+  const tenants = parseTenants(env);
+  if (!tenants.length) {
+    return { error: 500, message: "No tenants configured (TENANTS_JSON empty)" };
+  }
+
+  const superAdmins = parseSuperAdmins(env);
+  const isSuperAdmin = superAdmins.includes(email);
+
+  const url = new URL(req.url);
+
+  // Super-admin override: ?as=<slug> or active_tenant cookie or x-tenant header
+  if (isSuperAdmin) {
+    const overrideSlug = (
+      url.searchParams.get("as") ||
+      req.headers.get("x-tenant") ||
+      readCookie(req, "active_tenant") ||
+      ""
+    ).trim();
+
+    if (overrideSlug) {
+      const t = tenants.find((x) => x.slug === overrideSlug);
+      if (t) return { tenant: t, email, isSuperAdmin, availableTenants: tenants };
+    }
+  }
+
+  // Domain match
+  const domain = email.split("@")[1] || "";
+  const matches = tenants.filter((t) =>
+    Array.isArray(t.domains) &&
+    t.domains.map((d) => String(d).toLowerCase()).includes(domain)
+  );
+
+  if (matches.length) {
+    return {
+      tenant: matches[0],
+      email,
+      isSuperAdmin,
+      availableTenants: isSuperAdmin ? tenants : matches,
+    };
+  }
+
+  // Super-admin with no domain match: default to first tenant so the app loads
+  if (isSuperAdmin) {
+    return { tenant: tenants[0], email, isSuperAdmin, availableTenants: tenants };
+  }
+
+  return { error: 403, message: `No tenant for ${email}` };
+}
+
+function getTenantSecret(env, slug) {
+  const key = `ZOOM_CLIENT_SECRET_${String(slug).toUpperCase()}`;
+  return env[key];
+}
+
+async function withTenant(req, env, handler) {
+  const r = await resolveTenant(req, env);
+  if (r.error) return json(r.error, { error: r.message });
+  return handler(req, env, r.tenant);
+}
+
+function getHostCacheForTenant(slug) {
+  let m = hostCacheByTenant.get(slug);
+  if (!m) {
+    m = new Map();
+    hostCacheByTenant.set(slug, m);
+  }
+  return m;
+}
+
+async function getHostInfo(hostId, accessToken, tenantSlug) {
   if (!hostId) {
     return { name: "Unknown", email: "" };
   }
 
-  // Cache hit
-  if (hostCache.has(hostId)) {
-    return hostCache.get(hostId);
-  }
+  const cache = getHostCacheForTenant(tenantSlug);
+  if (cache.has(hostId)) return cache.get(hostId);
 
   try {
     const res = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(hostId)}`, {
@@ -37,12 +143,10 @@ async function getHostInfo(hostId, accessToken) {
     });
 
     if (!res.ok) {
-      // For example, missing user:read scopes, deleted users, etc.
-      // Don't throw – just fallback to Unknown.
       const text = await res.text().catch(() => "");
       console.log("getHostInfo non-OK", res.status, text);
       const fallback = { name: "Unknown", email: "" };
-      hostCache.set(hostId, fallback);
+      cache.set(hostId, fallback);
       return fallback;
     }
 
@@ -52,35 +156,28 @@ async function getHostInfo(hostId, accessToken) {
     const email = data.email || "";
 
     const host = { name, email };
-    hostCache.set(hostId, host);
+    cache.set(hostId, host);
     return host;
   } catch (e) {
     console.log("getHostInfo error", e && e.message ? e.message : e);
     const fallback = { name: "Unknown", email: "" };
-    hostCache.set(hostId, fallback);
+    cache.set(hostId, fallback);
     return fallback;
   }
 }
 
-/**
- * Attach hostName + hostEmail to each meeting record in the API response.
- * Expects an array of `meeting` objects from Zoom's cloud recording list.
- */
-async function attachHostsToRecordings(meetings, accessToken) {
+async function attachHostsToRecordings(meetings, accessToken, tenantSlug) {
   if (!Array.isArray(meetings) || meetings.length === 0) return [];
 
-  // Collect unique host_ids to avoid N+1 spam
   const uniqueHostIds = [...new Set(meetings.map(m => m.host_id).filter(Boolean))];
 
-  // Pre-warm cache (parallel fetch)
   await Promise.all(
-    uniqueHostIds.map(id => getHostInfo(id, accessToken))
+    uniqueHostIds.map(id => getHostInfo(id, accessToken, tenantSlug))
   );
 
-  // Attach host info
   return Promise.all(
     meetings.map(async (m) => {
-      const host = await getHostInfo(m.host_id, accessToken);
+      const host = await getHostInfo(m.host_id, accessToken, tenantSlug);
       return {
         ...m,
         hostName: host.name,
@@ -90,17 +187,32 @@ async function attachHostsToRecordings(meetings, accessToken) {
   );
 }
 
-async function getZoomAccessToken(env) {
-  const now = Date.now();
-  if (cachedToken && now < cachedTokenExp - 30_000) {
-    return cachedToken;
+async function getZoomAccessToken(env, tenant) {
+  if (!tenant || !tenant.slug) {
+    throw new Error("getZoomAccessToken called without a tenant");
   }
 
-  const basicAuth = btoa(`${env.ZOOM_CLIENT_ID}:${env.ZOOM_CLIENT_SECRET}`);
+  const now = Date.now();
+  const cached = tokenCacheByTenant.get(tenant.slug);
+  if (cached && now < cached.exp - 30_000) {
+    return cached.token;
+  }
+
+  const clientId = tenant.clientId;
+  const accountId = tenant.accountId;
+  const clientSecret = getTenantSecret(env, tenant.slug);
+
+  if (!clientId || !accountId || !clientSecret) {
+    throw new Error(
+      `Tenant ${tenant.slug} is missing Zoom credentials (clientId/accountId/secret)`
+    );
+  }
+
+  const basicAuth = btoa(`${clientId}:${clientSecret}`);
 
   const url = new URL(ZOOM_OAUTH_TOKEN_URL);
   url.searchParams.set("grant_type", "account_credentials");
-  url.searchParams.set("account_id", env.ZOOM_ACCOUNT_ID);
+  url.searchParams.set("account_id", accountId);
 
   const res = await fetch(url.toString(), {
     method: "POST",
@@ -115,22 +227,24 @@ async function getZoomAccessToken(env) {
   }
 
   const data = await res.json();
-  cachedToken = data.access_token;
-  cachedTokenExp = Date.now() + (data.expires_in || 3600) * 1000;
-  return cachedToken;
+  const token = data.access_token;
+  const exp = Date.now() + (data.expires_in || 3600) * 1000;
+  tokenCacheByTenant.set(tenant.slug, { token, exp });
+  return token;
 }
 
 /* -------------------- PHONE RECORDINGS -------------------- */
 
-async function handleGetRecordings(req, env) {
+async function handleGetRecordings(req, env, tenant) {
   const url = new URL(req.url);
   const upstreamUrl = new URL(`${ZOOM_API_BASE}/phone/recordings`);
 
   for (const [key, value] of url.searchParams.entries()) {
+    if (key === "as") continue; // strip super-admin tenant override
     upstreamUrl.searchParams.set(key, value);
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const upstreamRes = await fetch(upstreamUrl.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -152,7 +266,7 @@ async function handleGetRecordings(req, env) {
 
 /* -------------------- DELETE PHONE RECORDINGS -------------------- */
 
-async function handleDeletePhoneRecording(req, env) {
+async function handleDeletePhoneRecording(req, env, tenant) {
   if (req.method !== "POST") {
     return json(405, { error: "Method not allowed" });
   }
@@ -169,7 +283,7 @@ async function handleDeletePhoneRecording(req, env) {
     return json(400, { error: "Missing recordingId" });
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const zoomUrl = `${ZOOM_API_BASE}/phone/recordings/${encodeURIComponent(recordingId)}`;
 
@@ -222,7 +336,7 @@ async function handleDeletePhoneRecording(req, env) {
 
 /* -------------------- MEETING RECORDING ANALYTICS SUMMARY -------------------- */
 
-async function handleGetMeetingRecordingAnalyticsSummary(req, env) {
+async function handleGetMeetingRecordingAnalyticsSummary(req, env, tenant) {
   const url = new URL(req.url);
   const meetingId = url.searchParams.get("meetingId") || "";
   const from = url.searchParams.get("from") || "";
@@ -231,7 +345,7 @@ async function handleGetMeetingRecordingAnalyticsSummary(req, env) {
   if (!meetingId) return json(400, { ok: false, error: "Missing meetingId" });
   if (!from || !to) return json(400, { ok: false, error: "Missing from/to" });
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const meetingPathId = encodeZoomMeetingId(meetingId);
 
@@ -301,7 +415,7 @@ async function handleGetMeetingRecordingAnalyticsSummary(req, env) {
 
 /* -------------------- DELETE MEETING RECORDINGS -------------------- */
 
-async function handleDeleteMeetingRecording(req, env) {
+async function handleDeleteMeetingRecording(req, env, tenant) {
   if (req.method !== "POST") {
     return json(405, { error: "Method not allowed" });
   }
@@ -323,7 +437,7 @@ async function handleDeleteMeetingRecording(req, env) {
     });
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   // Zoom double-encoding rules for UUID
   const rawMeetingId = String(meetingId);
@@ -395,11 +509,12 @@ async function handleDeleteMeetingRecording(req, env) {
 
 /* -------------------- PHONE VOICEMAILS -------------------- */
 
-async function handleGetVoicemails(req, env) {
+async function handleGetVoicemails(req, env, tenant) {
   const url = new URL(req.url);
   const upstreamUrl = new URL(`${ZOOM_API_BASE}/phone/voice_mails`);
 
   for (const [key, value] of url.searchParams.entries()) {
+    if (key === "as") continue;
     upstreamUrl.searchParams.set(key, value);
   }
 
@@ -408,7 +523,7 @@ async function handleGetVoicemails(req, env) {
     upstreamUrl.searchParams.set("trashed", "false");
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const upstreamRes = await fetch(upstreamUrl.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -428,7 +543,7 @@ async function handleGetVoicemails(req, env) {
   });
 }
 
-async function handleDownloadVoicemail(req, env) {
+async function handleDownloadVoicemail(req, env, tenant) {
   const url = new URL(req.url);
   const target = url.searchParams.get("url");
   const filename = url.searchParams.get("filename") || "";
@@ -446,7 +561,7 @@ async function handleDownloadVoicemail(req, env) {
     return json(400, { error: "Blocked URL" });
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const zoomRes = await fetch(zoomUrl.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -474,7 +589,7 @@ async function handleDownloadVoicemail(req, env) {
   });
 }
 
-async function handleDeleteVoicemail(req, env) {
+async function handleDeleteVoicemail(req, env, tenant) {
   if (req.method !== "POST") {
     return json(405, { error: "Method not allowed" });
   }
@@ -491,7 +606,7 @@ async function handleDeleteVoicemail(req, env) {
     return json(400, { error: "Missing voicemailId" });
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const zoomUrl = `${ZOOM_API_BASE}/phone/voice_mails/${encodeURIComponent(voicemailId)}`;
 
@@ -541,7 +656,7 @@ async function handleDeleteVoicemail(req, env) {
   });
 }
 
-async function handleUpdateVoicemailStatus(req, env) {
+async function handleUpdateVoicemailStatus(req, env, tenant) {
   if (req.method !== "POST") {
     return json(405, { error: "Method not allowed" });
   }
@@ -564,7 +679,7 @@ async function handleUpdateVoicemailStatus(req, env) {
   // Zoom expects title-case on this PATCH param
   const readStatus = next === "read" ? "Read" : "Unread";
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const zoomUrl =
     `${ZOOM_API_BASE}/phone/voice_mails/${encodeURIComponent(voicemailId)}` +
@@ -596,15 +711,16 @@ async function handleUpdateVoicemailStatus(req, env) {
 
 /* --------------------- CONTACT CENTER RECORDINGS -------------------- */
 
-async function handleGetContactCenterRecordings(req, env) {
+async function handleGetContactCenterRecordings(req, env, tenant) {
   const url = new URL(req.url);
   const upstreamUrl = new URL(`${ZOOM_API_BASE}/contact_center/recordings`);
 
   for (const [key, value] of url.searchParams.entries()) {
+    if (key === "as") continue;
     upstreamUrl.searchParams.set(key, value);
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const upstreamRes = await fetch(upstreamUrl.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -629,7 +745,7 @@ async function handleGetContactCenterRecordings(req, env) {
 
 /* -------------------- DOWNLOAD PROXY FOR CONTACT CENTER RECORDINGS -------------------- */
 
-async function handleDownloadContactCenterRecording(req, env) {
+async function handleDownloadContactCenterRecording(req, env, tenant) {
   const url = new URL(req.url);
   const target = url.searchParams.get("url");
   const filename = url.searchParams.get("filename") || "";
@@ -658,7 +774,7 @@ async function handleDownloadContactCenterRecording(req, env) {
     return json(400, { error: "Blocked path" });
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const zoomRes = await fetch(zoomUrl.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -688,7 +804,7 @@ async function handleDownloadContactCenterRecording(req, env) {
 
 /* -------------------- MEETING RECORDINGS (USER-AGGREGATED, SEARCHABLE) -------------------- */
 
-async function handleGetMeetingRecordings(req, env) {
+async function handleGetMeetingRecordings(req, env, tenant) {
   try {
     const url = new URL(req.url);
 
@@ -702,7 +818,7 @@ async function handleGetMeetingRecordings(req, env) {
     const topicFilter = (url.searchParams.get("topic") || "").toLowerCase();
     const q = (url.searchParams.get("q") || "").toLowerCase();
 
-    const token = await getZoomAccessToken(env);
+    const token = await getZoomAccessToken(env, tenant);
 
     // 1) Get all active users with pagination
     const users = [];
@@ -934,7 +1050,7 @@ async function handleGetMeetingRecordings(req, env) {
     }
 
     // 3.5) Enrich with hostName + hostEmail based on host_id
-    const meetingsWithHosts = await attachHostsToRecordings(meetings, token);
+    const meetingsWithHosts = await attachHostsToRecordings(meetings, token, tenant.slug);
 
     // 4) Apply backend filters if needed (UI also filters)
     let filtered = meetingsWithHosts;
@@ -1002,8 +1118,8 @@ async function handleGetMeetingRecordings(req, env) {
 
 /* -------------------- MEETING IDENTITY -------------------- */
 
-async function handleGetMeetingIdentity(req, env) {
-  const accountId = env.ZOOM_ACCOUNT_ID || "unknown";
+async function handleGetMeetingIdentity(req, env, tenant) {
+  const accountId = tenant?.accountId || "unknown";
 
   return new Response(
     JSON.stringify({
@@ -1014,45 +1130,9 @@ async function handleGetMeetingIdentity(req, env) {
   );
 }
 
-function encodeZoomMeetingIdForPath(meetingId) {
-  // Match your delete logic: some UUIDs contain / and require double-encoding
-  const raw = String(meetingId || "");
-  let pathId = raw;
-
-  if (pathId.startsWith("/") || pathId.includes("//")) {
-    pathId = encodeURIComponent(pathId); // first encode
-  }
-  pathId = encodeURIComponent(pathId); // always encode for URL
-  return pathId;
-}
-
-function summarizeAnalyticsSummary(apiJson) {
-  const arr = Array.isArray(apiJson?.analytics_summary)
-    ? apiJson.analytics_summary
-    : [];
-
-  let plays = 0;
-  let downloads = 0;
-  let lastAccessDate = ""; // YYYY-MM-DD max
-
-  for (const row of arr) {
-    const v = Number(row?.views_total_count ?? 0);
-    const d = Number(row?.downloads_total_count ?? 0);
-    if (!Number.isNaN(v)) plays += v;
-    if (!Number.isNaN(d)) downloads += d;
-
-    const date = typeof row?.date === "string" ? row.date : "";
-    if (date && (!lastAccessDate || date > lastAccessDate)) {
-      lastAccessDate = date; // ISO date compare works lexicographically
-    }
-  }
-
-  return { plays, downloads, lastAccessDate };
-}
-
 /* -------------------- DOWNLOAD PROXY (PHONE) -------------------- */
 
-async function handleDownloadRecording(req, env) {
+async function handleDownloadRecording(req, env, tenant) {
   const url = new URL(req.url);
   const target = url.searchParams.get("url");
 
@@ -1074,7 +1154,7 @@ async function handleDownloadRecording(req, env) {
     return json(400, { error: "Blocked URL" });
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
 
   const zoomRes = await fetch(zoomUrl.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -1091,7 +1171,7 @@ async function handleDownloadRecording(req, env) {
 
 /* -------------------- DOWNLOAD PROXY (MEETING) -------------------- */
 
-async function handleDownloadMeetingRecording(req, env) {
+async function handleDownloadMeetingRecording(req, env, tenant) {
   const url = new URL(req.url);
   const target = url.searchParams.get("url");
   const filename = url.searchParams.get("filename") || "";
@@ -1117,7 +1197,7 @@ async function handleDownloadMeetingRecording(req, env) {
     return json(400, { error: "Blocked path" });
   }
 
-  const token = await getZoomAccessToken(env);
+  const token = await getZoomAccessToken(env, tenant);
   if (!token) {
     return json(500, { error: "Unable to acquire Zoom access token" });
   }
@@ -1156,38 +1236,6 @@ async function handleDownloadMeetingRecording(req, env) {
 }
 
 
-/* -------------------- handle proxy download for unified download model -------------------- */
-
-async function handleProxyDownload(req, env, kind) {
-  const u = new URL(req.url);
-  const url = u.searchParams.get("url");
-  const filename = u.searchParams.get("filename") || "download.bin";
-  if (!url) return new Response("Missing url", { status: 400 });
-
-  const accessToken = await getZoomAccessToken(env); // whatever you already use
-
-  const upstream = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!upstream.ok) {
-    const txt = await upstream.text().catch(() => "");
-    return new Response(`Upstream ${upstream.status}: ${txt}`, { status: 502 });
-  }
-
-  return new Response(upstream.body, {
-    status: 200,
-    headers: {
-      "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
 /* -------------------- JSON HELPER -------------------- */
 
 function json(status, obj) {
@@ -1206,60 +1254,128 @@ function encodeZoomMeetingId(meetingId) {
   return encodeURIComponent(encodeURIComponent(raw));
 }
 
+/* -------------------- /api/me + tenant switch -------------------- */
+
+async function handleMe(req, env) {
+  const r = await resolveTenant(req, env);
+  if (r.error) return json(r.error, { error: r.message });
+
+  const projectTenant = (t) =>
+    t && {
+      slug: t.slug,
+      displayName: t.displayName || t.slug,
+      isProduction: !!t.isProduction,
+    };
+
+  return json(200, {
+    email: r.email,
+    isSuperAdmin: !!r.isSuperAdmin,
+    activeTenant: projectTenant(r.tenant),
+    availableTenants: (r.availableTenants || []).map(projectTenant),
+  });
+}
+
+async function handleSwitchTenant(req, env) {
+  if (req.method !== "POST") return json(405, { error: "Method not allowed" });
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const slug = String(body?.slug || "").trim();
+  if (!slug) return json(400, { error: "Missing slug" });
+
+  // Reuse resolution to check super-admin status
+  const r = await resolveTenant(req, env);
+  if (r.error) return json(r.error, { error: r.message });
+
+  if (!r.isSuperAdmin) {
+    return json(403, { error: "Only super-admins can switch tenants" });
+  }
+
+  const tenants = parseTenants(env);
+  const t = tenants.find((x) => x.slug === slug);
+  if (!t) return json(404, { error: `Unknown tenant: ${slug}` });
+
+  // Set cookie. Path=/ so it applies to /api/* and assets. SameSite=Lax keeps it
+  // on top-level navigations. Secure because the worker is HTTPS-only.
+  const cookie =
+    `active_tenant=${encodeURIComponent(slug)}; Path=/; SameSite=Lax; Secure; Max-Age=31536000`;
+
+  return new Response(JSON.stringify({ ok: true, slug }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Set-Cookie": cookie,
+    },
+  });
+}
+
 /* -------------------- ROUTER -------------------- */
 
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
 
+    // Identity / tenant switching (no withTenant wrapper — these manage tenant state themselves)
+    if (url.pathname === "/api/me" && req.method === "GET") {
+      return handleMe(req, env);
+    }
+    if (url.pathname === "/api/switch-tenant" && req.method === "POST") {
+      return handleSwitchTenant(req, env);
+    }
+
     // Phone recordings
     if (url.pathname === "/api/phone/recordings" && req.method === "GET") {
-      return handleGetRecordings(req, env);
+      return withTenant(req, env, handleGetRecordings);
     }
     if (url.pathname === "/api/phone/recordings/download" && req.method === "GET") {
-      return handleDownloadRecording(req, env); // or handleProxyDownload(req, env, "phone")
+      return withTenant(req, env, handleDownloadRecording);
     }
     if (url.pathname === "/api/phone/recordings/delete" && req.method === "POST") {
-      return handleDeletePhoneRecording(req, env);
+      return withTenant(req, env, handleDeletePhoneRecording);
     }
 
     // Phone voicemails
     if (url.pathname === "/api/phone/voicemails" && req.method === "GET") {
-      return handleGetVoicemails(req, env);
+      return withTenant(req, env, handleGetVoicemails);
     }
     if (url.pathname === "/api/phone/voicemails/download" && req.method === "GET") {
-      return handleDownloadVoicemail(req, env);
+      return withTenant(req, env, handleDownloadVoicemail);
     }
     if (url.pathname === "/api/phone/voicemails/delete" && req.method === "POST") {
-      return handleDeleteVoicemail(req, env);
+      return withTenant(req, env, handleDeleteVoicemail);
     }
     if (url.pathname === "/api/phone/voicemails/status" && req.method === "POST") {
-      return handleUpdateVoicemailStatus(req, env);
+      return withTenant(req, env, handleUpdateVoicemailStatus);
     }
 
     // Meetings
     if (url.pathname === "/api/meeting/recordings/analytics_summary" && req.method === "GET") {
-      return handleGetMeetingRecordingAnalyticsSummary(req, env);
+      return withTenant(req, env, handleGetMeetingRecordingAnalyticsSummary);
     }
     if (url.pathname === "/api/meeting/recordings" && req.method === "GET") {
-      return handleGetMeetingRecordings(req, env);
+      return withTenant(req, env, handleGetMeetingRecordings);
     }
     if (url.pathname === "/api/meeting/recordings/download" && req.method === "GET") {
-      return handleDownloadMeetingRecording(req, env); // or handleProxyDownload(req, env, "meetings")
+      return withTenant(req, env, handleDownloadMeetingRecording);
     }
     if (url.pathname === "/api/meeting/recordings/delete" && req.method === "POST") {
-      return handleDeleteMeetingRecording(req, env);
+      return withTenant(req, env, handleDeleteMeetingRecording);
     }
     if (url.pathname === "/api/meeting/identity" && req.method === "GET") {
-      return handleGetMeetingIdentity(req, env);
+      return withTenant(req, env, handleGetMeetingIdentity);
     }
 
     // Contact Center
     if (url.pathname === "/api/contact_center/recordings" && req.method === "GET") {
-      return handleGetContactCenterRecordings(req, env);
+      return withTenant(req, env, handleGetContactCenterRecordings);
     }
     if (url.pathname === "/api/contact_center/recordings/download" && req.method === "GET") {
-      return handleDownloadContactCenterRecording(req, env);
+      return withTenant(req, env, handleDownloadContactCenterRecording);
     }
 
     // Assets

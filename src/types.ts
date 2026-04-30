@@ -202,6 +202,19 @@ export type DeleteProgress = {
   done: number;
 };
 
+export type TenantInfo = {
+  slug: string;
+  displayName: string;
+  isProduction: boolean;
+};
+
+export type MeResponse = {
+  email: string;
+  isSuperAdmin: boolean;
+  activeTenant: TenantInfo | null;
+  availableTenants: TenantInfo[];
+};
+
 export type VoicemailItem = {
   id: string;
   call_id?: string;
