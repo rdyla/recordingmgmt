@@ -31,8 +31,8 @@ directory = "./dist"
 # header-trust behavior (only safe if Access is unconditionally in front).
 [vars]
 SUPER_ADMINS = "rdyla@packetfusion.com"
-CF_ACCESS_TEAM_DOMAIN = ""
-CF_ACCESS_AUD = ""
+CF_ACCESS_TEAM_DOMAIN = "packetfusion.cloudflareaccess.com"
+CF_ACCESS_AUD = "fdcc7fd3cd0e8ef6431e6c7317fbda891dc8631bbde4ffd9a0f6395cc89eec3f"
 TENANTS_JSON = '''
 [
   {
