@@ -22,8 +22,9 @@ body {
 
 
 .app-header {
-  border-bottom: 1px solid #1f2937;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   padding: 16px 24px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.4) 0%, transparent 100%);
 }
 
 .app-header-inner {
@@ -65,11 +66,12 @@ body {
 
 /* The card contains header controls + scrollable table */
 .app-card {
-  background-color: #020617;
-  border: 1px solid #1f2937;
-  border-radius: 16px;
-  padding: 16px 20px;
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.85);
+  background-color: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  padding: 18px 22px;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.5);
+  backdrop-filter: blur(2px);
 
   display: flex;
   flex-direction: column;
@@ -100,27 +102,42 @@ body {
 
 .rec-table th,
 .rec-table td {
-  padding: 6px 10px;
+  padding: 9px 12px;
   text-align: left;
   white-space: nowrap;
 }
 
 .rec-table thead {
   background-color: #020617;
-  border-bottom: 1px solid #1f2937;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .rec-table th {
   font-size: 11px;
-  color: #9ca3af;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
 }
 
 .rec-row {
-  border-top: 1px solid #111827;
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+  transition: background-color 0.12s ease;
 }
 
 .rec-row:hover {
-  background-color: #020617;
+  background-color: rgba(56, 189, 248, 0.04);
+}
+
+.group-row {
+  background-color: rgba(15, 23, 42, 0.6);
+}
+
+.group-row:hover {
+  background-color: rgba(15, 23, 42, 0.75);
 }
 
 .rec-table-empty {
@@ -261,24 +278,6 @@ input[type="date"].form-control {
 
 .files-dd-item:hover {
   background: rgba(255,255,255,0.08);
-}
-
-/* Keep table from feeling "scrunched" */
-.table-wrapper {
-  overflow-x: auto;
-}
-
-.rec-table {
-  width: 100%;
-  min-width: 1100px; /* adjust to taste */
-}
-
-/* Files cell stays one line */
-.files-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
 }
 
 .files-count {
@@ -453,20 +452,34 @@ input[type="date"].form-control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  margin-right: 0.5rem;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.9); /* slate-400 */
-  background: rgba(15, 23, 42, 0.85);         /* slate-900-ish */
-  color: #e5e7eb;                             /* text-slate-200 */
-  font-size: 0.8rem;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #94a3b8;                /* slate-400 */
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.group-toggle svg {
+  transition: transform 0.18s ease;
+}
+
+.group-toggle.group-toggle-open svg {
+  transform: rotate(90deg);
 }
 
 .group-toggle:hover {
-  background: rgba(30, 64, 175, 0.95);        /* indigo-ish */
-  border-color: #38bdf8;                      /* sky-400 */
-  color: #f9fafb;
+  color: #38bdf8;                /* sky-400 */
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.group-toggle:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 1px;
 }
 
 /* ---- Pager ---- */
@@ -504,10 +517,10 @@ input[type="date"].form-control {
 .toggle-pill-group {
   display: inline-flex;
   gap: 4px;
-  background: #020617;
-  padding: 2px;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 3px;
   border-radius: 999px;
-  border: 1px solid #1f2937;
+  border: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .toggle-pill {
@@ -529,6 +542,8 @@ input[type="date"].form-control {
 .toggle-pill-active {
   background-color: #0ea5e9;
   color: #0b1120;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(14, 165, 233, 0.35);
 }
 
 .toggle-pill:disabled {
@@ -561,42 +576,44 @@ input[type="date"].form-control {
     color 0.15s ease, transform 0.1s ease;
 }
 
-.btn:hover,
-.pager-btn:hover {
-  background-color: #0f172a;                /* slate-900-ish */
-  border-color: #38bdf8;                    /* sky-400 */
+.btn:hover:not(:disabled),
+.pager-btn:hover:not(:disabled) {
+  background-color: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.55);
   color: #f9fafb;
-  transform: translateY(-0.5px);
-}
-
-.btn:active,
-.pager-btn:active {
-  transform: translateY(0);
 }
 
 .btn:disabled,
 .pager-btn:disabled {
   opacity: 0.45;
   cursor: default;
-  transform: none;
 }
 
 
 
 /* Danger button for destructive actions */
 .btn-danger {
-  padding: 6px 14px;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: 999px;
   border: none;
   background-color: #b91c1c;
   color: #f9fafb;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
 }
 
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
   background-color: #dc2626;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Simple modal */
@@ -611,17 +628,17 @@ input[type="date"].form-control {
 }
 
 .modal-card {
-  background-color: #020617;
-  border-radius: 16px;
-  border: 1px solid #1f2937;
-  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.7);
-  padding: 16px 20px;
+  background-color: #0b1220;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  padding: 18px 22px;
   width: 480px;
   max-width: 90vw;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .modal-title {
@@ -644,8 +661,8 @@ input[type="date"].form-control {
   max-height: 260px;
   overflow: auto;
   border-radius: 10px;
-  border: 1px solid #1f2937;
-  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  padding: 8px 10px;
 }
 
 .modal-list-item {

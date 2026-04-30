@@ -38,6 +38,23 @@ const DownloadIcon: React.FC = () => (
   </svg>
 );
 
+const ChevronIcon: React.FC = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.25"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path d="M9 6l6 6-6 6" />
+  </svg>
+);
+
 const RecordingsTable: React.FC<RecordingsTableProps> = ({
   ownerGroups,
   isGroupCollapsed,
@@ -127,10 +144,14 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                   <td colSpan={10}>
                     <button
                       type="button"
-                      className="group-toggle"
+                      className={
+                        "group-toggle" + (collapsed ? "" : " group-toggle-open")
+                      }
                       onClick={() => toggleGroupCollapse(group.key)}
+                      aria-label={collapsed ? "Expand group" : "Collapse group"}
+                      aria-expanded={!collapsed}
                     >
-                      {collapsed ? "▶" : "▼"}
+                      <ChevronIcon />
                     </button>
                     <strong>{group.ownerLabel}</strong>{" "}
                     <span style={{ opacity: 0.8 }}>
